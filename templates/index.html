@@ -1,0 +1,512 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>출타 신청</title>
+<style>
+  :root {
+    --bg: #f4f5f0; --card: #fff; --ink: #1f2420; --muted: #6b726c; --line: #dfe2da;
+    --accent: #3d5a3a; --accent-soft: #e3ebdf;
+    --휴가: #c2553d; --외박: #3a6ea5; --외출: #b0882a;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+         font: 15px/1.5 "Pretendard", "Apple SD Gothic Neo", "Malgun Gothic", system-ui, sans-serif; }
+  header { padding: 20px 16px 8px; max-width: 1100px; margin: 0 auto; }
+  header h1 { margin: 0; font-size: 22px; }
+  header p { margin: 4px 0 0; color: var(--muted); }
+  main { max-width: 1100px; margin: 0 auto; padding: 12px 16px 40px;
+         display: grid; grid-template-columns: 1fr 340px; gap: 16px; }
+  @media (max-width: 860px) { main { grid-template-columns: 1fr; } }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 16px; }
+
+  .cal-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+  .cal-head h2 { margin: 0; font-size: 18px; }
+  .cal-head button { border: 1px solid var(--line); background: var(--card); border-radius: 6px;
+                     padding: 4px 12px; cursor: pointer; font-size: 16px; }
+  .grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; }
+  .dow { text-align: center; font-size: 12px; color: var(--muted); padding: 4px 0; }
+  .dow:first-child, .day.sun .num { color: #c2553d; }
+  .dow:last-child, .day.sat .num { color: #3a6ea5; }
+  .day { min-height: 78px; border: 1px solid var(--line); border-radius: 6px; padding: 4px 6px;
+         cursor: pointer; background: var(--card); user-select: none; }
+  .day:hover { border-color: var(--accent); }
+  .day.empty { visibility: hidden; }
+  .day.past, .day.closed { opacity: .4; }
+  .window { margin-top: 12px; padding: 8px 10px; border-radius: 6px; background: var(--accent-soft);
+            font-size: 13px; }
+  .window div + div { margin-top: 2px; }
+  .window b { display: inline-block; min-width: 62px; }
+  .window .off { color: var(--muted); }
+  .day.today .num { background: var(--ink); color: #fff !important; border-radius: 4px; padding: 0 5px; }
+  .day.sel { background: var(--accent-soft); border-color: var(--accent); }
+  .day.focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+  .num { font-size: 13px; font-weight: 600; }
+  .counts { margin-top: 4px; display: flex; flex-direction: column; gap: 1px; font-size: 11px; }
+  .counts span::before { content: ""; display: inline-block; width: 7px; height: 7px; border-radius: 50%;
+                         margin-right: 4px; background: var(--c); }
+  .counts .sum { color: var(--muted); }
+  .counts .sum::before { display: none; }
+  .counts .full { color: #c2553d; font-weight: 700; }
+  .day.full { background: #fbecea; }
+  .day.full.sel { background: var(--accent-soft); }
+  .limits { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; margin-top: 8px;
+            font-size: 13px; color: var(--muted); }
+  .limits b { color: var(--ink); }
+  .limits a { margin-left: auto; color: var(--muted); }
+  .legend { display: flex; gap: 14px; margin-top: 10px; font-size: 12px; color: var(--muted); }
+  .legend span::before { content: ""; display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+                         margin-right: 5px; background: var(--c); }
+
+  form label { display: block; font-size: 13px; color: var(--muted); margin: 12px 0 4px; }
+  form h3, .list h3 { margin: 0; font-size: 16px; }
+  .types { display: flex; gap: 6px; }
+  .types input { display: none; }
+  .types label { flex: 1; margin: 0; text-align: center; padding: 8px 0; border: 1px solid var(--line);
+                 border-radius: 6px; cursor: pointer; color: var(--ink); font-size: 14px; }
+  .types input:checked + label { background: var(--c); border-color: var(--c); color: #fff; }
+  .vdays { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+  form .vdays label { margin: 0; display: flex; flex-direction: column; align-items: center; gap: 2px;
+                      color: var(--ink); font-size: 13px; }
+  .vdays input { width: 100%; padding: 6px 4px; border: 1px solid var(--line); border-radius: 6px;
+                 font: inherit; text-align: center; }
+  .vsum { font-size: 12px; margin-top: 4px; color: var(--muted); }
+  .vsum.ok { color: var(--accent); } .vsum.bad { color: #c2553d; }
+  textarea { width: 100%; padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px;
+             font: inherit; resize: vertical; min-height: 56px; }
+  .checks { display: flex; gap: 16px; }
+  form .checks label { display: flex; align-items: center; gap: 6px; margin: 0; color: var(--ink);
+                       font-size: 14px; cursor: pointer; }
+  .checks input { width: 16px; height: 16px; accent-color: var(--accent); }
+  select, input[type=text] { width: 100%; padding: 8px 10px; border: 1px solid var(--line);
+                             border-radius: 6px; font: inherit; background: #fff; }
+  .row { display: flex; gap: 8px; }
+  .row > div { flex: 1; }
+  .range { padding: 8px 10px; background: var(--bg); border-radius: 6px; font-size: 14px; }
+  .hint { font-size: 12px; color: var(--muted); margin-top: 4px; }
+  button.submit { width: 100%; margin-top: 16px; padding: 10px; border: 0; border-radius: 6px;
+                  background: var(--accent); color: #fff; font: inherit; font-weight: 600; cursor: pointer; }
+  button.submit:disabled { opacity: .5; cursor: default; }
+  .msg { font-size: 13px; margin-top: 8px; min-height: 1.2em; }
+  .msg.err { color: #c2553d; } .msg.ok { color: var(--accent); }
+  .msg.warn { color: #9a6a00; }
+  .warn { margin-top: 8px; padding: 8px 10px; border-radius: 6px; background: #fdf3dc; color: #7a5400;
+          font-size: 13px; }
+  .warn strong { display: block; margin-bottom: 2px; }
+
+  .side { display: flex; flex-direction: column; gap: 16px; }
+  .list ul { list-style: none; margin: 10px 0 0; padding: 0; }
+  .list li { display: flex; align-items: center; gap: 8px; padding: 6px 0; border-top: 1px solid var(--line);
+             font-size: 14px; }
+  .tag { font-size: 11px; color: #fff; background: var(--c); border-radius: 4px; padding: 1px 6px; }
+  .list .period { color: var(--muted); font-size: 12px; margin-left: auto; }
+  .list .del { border: 0; background: none; color: var(--muted); cursor: pointer; font-size: 16px; }
+  .list .empty { color: var(--muted); font-size: 13px; margin-top: 8px; }
+  .list li.cancel { flex-wrap: wrap; }
+  .cancel-box { flex-basis: 100%; display: flex; gap: 6px; }
+  .cancel-box input { flex: 1; padding: 5px 8px; font-size: 13px; }
+  .cancel-box button { border: 1px solid var(--line); background: #fff; border-radius: 6px;
+                       padding: 4px 10px; cursor: pointer; font-size: 13px; }
+  .cancel-box .go { background: #c2553d; border-color: #c2553d; color: #fff; }
+  .cancel-err { flex-basis: 100%; color: #c2553d; font-size: 12px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>출타 신청</h1>
+  <p>달력에서 날짜를 고르고 출타 종류와 계급·이름·비밀번호를 입력하세요. 날짜별 출타 인원이 달력에 표시됩니다.</p>
+  <div class="limits" id="limits"></div>
+</header>
+
+<main>
+  <section class="card">
+    <div class="cal-head">
+      <button id="prev" aria-label="이전 달">‹</button>
+      <h2 id="title"></h2>
+      <button id="next" aria-label="다음 달">›</button>
+    </div>
+    <div class="grid" id="grid"></div>
+    <div class="legend">
+      {% for t in leave_types %}<span style="--c: var(--{{ t }})">{{ t }}</span>{% endfor %}
+    </div>
+  </section>
+
+  <div class="side">
+    <form class="card" id="form">
+      <h3>신청서</h3>
+
+      <label>출타 종류</label>
+      <div class="types">
+        {% for t in leave_types %}
+        <input type="radio" name="type" id="t{{ loop.index }}" value="{{ t }}" {% if loop.first %}checked{% endif %}>
+        <label for="t{{ loop.index }}" style="--c: var(--{{ t }})">{{ t }}</label>
+        {% endfor %}
+      </div>
+
+      <div id="vacationFields">
+        <label>휴가 종류별 일수</label>
+        <div class="vdays">
+          {% for k in vacation_kinds %}
+          <label>{{ k }}<input type="number" class="vday" data-kind="{{ k }}" min="0" max="100" placeholder="0"></label>
+          {% endfor %}
+        </div>
+        <div class="vsum" id="vsum"></div>
+        <label for="reason">세부사유</label>
+        <textarea id="reason" maxlength="100" placeholder="예: 분기 연가, ○○ 포상 (관리자만 볼 수 있습니다)"></textarea>
+      </div>
+
+      <div id="outingFields" hidden>
+        <label>구분</label>
+        <div class="checks">
+          <label><input type="checkbox" id="reward"> 포상</label>
+          <label><input type="checkbox" id="official"> 공용</label>
+        </div>
+      </div>
+
+      <div class="window" id="window"></div>
+
+      <label>날짜</label>
+      <div class="range" id="range">달력에서 날짜를 선택하세요</div>
+      <div class="hint" id="hint"></div>
+
+      <div class="row">
+        <div>
+          <label for="rank">계급</label>
+          <select id="rank" required>
+            <option value="">선택</option>
+            {% for r in ranks %}<option>{{ r }}</option>{% endfor %}
+          </select>
+        </div>
+        <div>
+          <label for="name">이름</label>
+          <input type="text" id="name" maxlength="20" placeholder="홍길동" required>
+        </div>
+      </div>
+
+      <label for="password">비밀번호</label>
+      <input type="password" id="password" minlength="4" maxlength="30" placeholder="4자 이상" required>
+      <div class="hint">신청을 취소할 때 이 비밀번호로 본인을 확인합니다.</div>
+
+      <div class="warn" id="warn" hidden></div>
+
+      <button class="submit" id="submit">신청하기</button>
+      <div class="msg" id="msg"></div>
+    </form>
+
+    <section class="card list">
+      <h3 id="listTitle">출타자 명단</h3>
+      <ul id="list"></ul>
+    </section>
+  </div>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const pad = (n) => String(n).padStart(2, "0");
+const iso = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+const todayIso = iso(new Date());
+const fmt = (s) => { const [, m, d] = s.split("-"); return `${+m}/${+d}`; };
+const parse = (s) => { const [y, m, d] = s.split("-"); return new Date(y, m - 1, d); };
+
+let view = new Date(); view.setDate(1);
+let requests = [];
+let settings = { strength: 0 };
+let selStart = null, selEnd = null;   // 신청할 기간
+let focusDate = todayIso;             // 명단을 볼 날짜
+let cancelId = null;                  // 비밀번호 확인 중인 신청
+
+const currentType = () => document.querySelector("input[name=type]:checked").value;
+
+async function load() {
+  const y = view.getFullYear(), m = view.getMonth();
+  const from = iso(new Date(y, m, 1)), to = iso(new Date(y, m + 1, 0));
+  const [reqRes, setRes] = await Promise.all([
+    fetch(`/api/requests?from=${from}&to=${to}`),
+    fetch("/api/settings"),
+  ]);
+  requests = await reqRes.json();
+  settings = await setRes.json();
+  renderLimits();
+  renderWindow();
+  render();
+}
+
+function renderLimits() {
+  const s = settings;
+  $("limits").innerHTML = (s.strength
+    ? `<span>총원 <b>${s.strength}명</b></span>
+       <span>휴가 최대 <b>${s.vacation_max}명</b> (${s.vacation_limit}%)</span>
+       <span>전체 출타 최대 <b>${s.total_max}명</b> (${s.total_limit}%)</span>`
+    : `<span>총원이 아직 설정되지 않아 출타율 제한이 적용되지 않습니다.</span>`)
+    + `<a href="/admin">관리자</a>`;
+}
+
+function onDate(dateIso) {
+  return requests.filter((r) => r.start_date <= dateIso && dateIso <= r.end_date);
+}
+
+// 출타율 계산에 들어가는 신청 (공용 외출/외박 제외)
+const counted = (list) => list.filter((r) => !r.official);
+
+function render() {
+  const y = view.getFullYear(), m = view.getMonth();
+  $("title").textContent = `${y}년 ${m + 1}월`;
+  const grid = $("grid");
+  grid.innerHTML = "일월화수목금토".split("").map((d) => `<div class="dow">${d}</div>`).join("");
+
+  const first = new Date(y, m, 1).getDay();
+  const days = new Date(y, m + 1, 0).getDate();
+  for (let i = 0; i < first; i++) grid.insertAdjacentHTML("beforeend", `<div class="day empty"></div>`);
+
+  for (let d = 1; d <= days; d++) {
+    const date = new Date(y, m, d), ds = iso(date);
+    const cls = ["day"];
+    if (date.getDay() === 0) cls.push("sun");
+    if (date.getDay() === 6) cls.push("sat");
+    if (ds < todayIso) cls.push("past");
+    else if (!isOpen(ds)) cls.push("closed");
+    if (ds === todayIso) cls.push("today");
+    if (selStart && ds >= selStart && ds <= (selEnd || selStart)) cls.push("sel");
+    if (ds === focusDate) cls.push("focus");
+
+    const all = onDate(ds), list = counted(all), official = all.length - list.length;
+    const counts = {};
+    list.forEach((r) => counts[r.type] = (counts[r.type] || 0) + 1);
+    const s = settings;
+    const vacFull = s.strength && (counts["휴가"] || 0) >= s.vacation_max;
+    const allFull = s.strength && list.length >= s.total_max;
+    if (allFull) cls.push("full");
+
+    let countHtml = Object.entries(counts).map(([t, n]) => {
+      const max = t === "휴가" && s.strength ? `/${s.vacation_max}` : "";
+      const full = t === "휴가" && vacFull ? "full" : "";
+      return `<span class="${full}" style="--c: var(--${t})">${t} ${n}${max}</span>`;
+    }).join("");
+    if (s.strength && list.length) {
+      countHtml += `<span class="sum ${allFull ? "full" : ""}">계 ${list.length}/${s.total_max}</span>`;
+    }
+    if (official) countHtml += `<span class="sum">공용 ${official}</span>`;
+
+    const el = document.createElement("div");
+    el.className = cls.join(" ");
+    el.innerHTML = `<div class="num">${d}</div><div class="counts">${countHtml}</div>`;
+    el.onclick = () => pick(ds);
+    grid.appendChild(el);
+  }
+  renderRange();
+  renderList();
+}
+
+// 시작일이 오늘 접수 중인 종합기간에 들어가는지 (종료일은 제한 없음)
+function isOpen(ds, type = currentType()) {
+  if (ds < todayIso) return false;
+  if (!settings.window?.enabled) return true;
+  const ranges = type === "휴가" ? settings.status.vacation_open : settings.status.outing_open;
+  return ranges.some((r) => r.from <= ds && ds <= r.to);
+}
+
+function pick(ds) {
+  focusDate = ds;
+  if (currentType() !== "외출" && selStart && !selEnd && ds >= selStart) {
+    selEnd = ds;                             // 기간 끝 지정
+  } else if (isOpen(ds)) {
+    selStart = ds; selEnd = null;            // 새 기간 시작
+  }
+  render();
+}
+
+function renderWindow() {
+  const w = settings.window, st = settings.status;
+  if (!w.enabled) { $("window").innerHTML = `<div class="off">종합기간 제한 없이 신청할 수 있습니다.</div>`; return; }
+  const day = (s) => `${fmt(s)}(${"일월화수목금토"[parse(s).getDay()]})`;
+  const outing = st.outing_open.length
+    ? st.outing_open.map((r) => `${day(r.from)}~${day(r.to)} 출타분 (${day(r.close)}까지)`).join("<br><b></b>")
+    : `<span class="off">종합 기간 아님 · 다음 종합 ${day(st.next_outing.open)}~${day(st.next_outing.close)}</span>`;
+  const vacation = st.vacation_open.length
+    ? st.vacation_open.map((r) => `${+r.from.slice(5, 7)}월분 (${day(r.close)}까지)`).join(", ")
+    : `<span class="off">종합 기간 아님 · 다음 종합 ${day(st.next_vacation.open)}~${day(st.next_vacation.close)}
+       (${+st.next_vacation.from.slice(5, 7)}월분)</span>`;
+  $("window").innerHTML = `<div><b>외출/외박</b>${outing}</div><div><b>휴가</b>${vacation}</div>`;
+}
+
+function renderRange() {
+  const type = currentType();
+  if (!selStart) {
+    $("range").textContent = "달력에서 날짜를 선택하세요";
+  } else if (!selEnd || selEnd === selStart) {
+    $("range").textContent = fmt(selStart);
+  } else {
+    const nights = (new Date(selEnd) - new Date(selStart)) / 86400000;
+    $("range").textContent = `${fmt(selStart)} ~ ${fmt(selEnd)} (${nights}박 ${nights + 1}일)`;
+  }
+  $("hint").textContent = type === "외출"
+    ? "외출은 하루만 선택합니다."
+    : "시작일을 누른 뒤 종료일을 누르세요.";
+
+  const warnings = overWarnings();
+  $("warn").hidden = !warnings.length;
+  $("warn").innerHTML = `<strong>출타율 초과 안내</strong>${warnings.join("<br>")}<br>초과되어도 신청은 가능합니다.`;
+  $("submit").textContent = warnings.length ? "초과를 확인하고 신청하기" : "신청하기";
+  renderVacationSum();
+}
+
+const selectedDays = () => selStart ? (parse(selEnd || selStart) - parse(selStart)) / 86400000 + 1 : 0;
+
+function vacationDays() {
+  const out = {};
+  document.querySelectorAll(".vday").forEach((el) => { if (+el.value) out[el.dataset.kind] = +el.value; });
+  return out;
+}
+
+// 종류별 일수 합계가 선택한 기간과 맞는지 보여준다
+function renderVacationSum() {
+  const sum = Object.values(vacationDays()).reduce((a, b) => a + b, 0), total = selectedDays();
+  $("vsum").className = "vsum " + (!total ? "" : sum === total ? "ok" : "bad");
+  $("vsum").textContent = !total ? "날짜를 먼저 선택하세요."
+    : sum === total ? `합계 ${sum}일 · 신청 기간 ${total}일과 일치`
+    : `합계 ${sum}일 / 신청 기간 ${total}일 (${total - sum > 0 ? `${total - sum}일 더 입력` : `${sum - total}일 초과`})`;
+}
+
+document.querySelectorAll(".vday").forEach((el) => el.oninput = renderVacationSum);
+$("official").onchange = renderRange;
+
+// 선택한 기간에 신청하면 출타율 상한을 넘는 날짜 (화면에 불러온 달 기준)
+function overWarnings() {
+  const s = settings;
+  const type = currentType();
+  if (!s.strength || !selStart || (type !== "휴가" && $("official").checked)) return [];
+  const vacOver = [], allOver = [];
+  for (let d = parse(selStart); iso(d) <= (selEnd || selStart); d.setDate(d.getDate() + 1)) {
+    const ds = iso(d), list = counted(onDate(ds));
+    const vac = list.filter((r) => r.type === "휴가").length + (type === "휴가");
+    if (type === "휴가" && vac > s.vacation_max) vacOver.push(fmt(ds));
+    if (list.length + 1 > s.total_max) allOver.push(fmt(ds));
+  }
+  const out = [];
+  if (vacOver.length) out.push(`${vacOver.join(", ")} 휴가 출타율 초과 (최대 ${s.vacation_max}명, ${s.vacation_limit}%)`);
+  if (allOver.length) out.push(`${allOver.join(", ")} 전체 출타율 초과 (최대 ${s.total_max}명, ${s.total_limit}%)`);
+  return out;
+}
+
+function renderList() {
+  const list = onDate(focusDate);
+  $("listTitle").textContent = `${fmt(focusDate)} 출타자 명단 (${list.length}명)`;
+  $("list").innerHTML = list.length
+    ? list.map((r) => `
+        <li class="${r.id === cancelId ? "cancel" : ""}">
+          <span class="tag" style="--c: var(--${r.type})">${[r.type, detail(r)].filter(Boolean).join("·")}</span>
+          <span>${esc(r.rank)} ${esc(r.name)}</span>
+          <span class="period">${r.start_date === r.end_date ? fmt(r.start_date) : `${fmt(r.start_date)}~${fmt(r.end_date)}`}</span>
+          <button class="del" data-id="${r.id}" title="신청 취소">×</button>
+          ${r.id === cancelId ? `
+            <div class="cancel-box">
+              <input type="password" id="cancelPw" placeholder="신청 비밀번호" maxlength="30">
+              <button class="go" data-id="${r.id}">취소하기</button>
+              <button class="back">닫기</button>
+            </div>
+            <div class="cancel-err" id="cancelErr"></div>` : ""}
+        </li>`).join("")
+    : `<li class="empty">출타 인원이 없습니다.</li>`;
+  if (cancelId) $("cancelPw")?.focus();
+}
+
+function esc(s) {
+  return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+function showMsg(text, kind = "err") {
+  $("msg").textContent = text;
+  $("msg").className = "msg " + kind;
+}
+
+async function cancelRequest(id) {
+  const res = await fetch(`/api/requests/${id}`, {
+    method: "DELETE",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ password: $("cancelPw").value }),
+  });
+  if (!res.ok) {
+    $("cancelErr").textContent = (await res.json()).error;
+    return;
+  }
+  cancelId = null;
+  load();
+}
+
+$("list").onclick = (e) => {
+  const del = e.target.closest(".del");
+  if (del) { cancelId = +del.dataset.id === cancelId ? null : +del.dataset.id; renderList(); return; }
+  if (e.target.closest(".back")) { cancelId = null; renderList(); return; }
+  const go = e.target.closest(".go");
+  if (go) cancelRequest(go.dataset.id);
+};
+
+$("list").onkeydown = (e) => {
+  if (e.key === "Enter" && e.target.id === "cancelPw") cancelRequest(cancelId);
+};
+
+// 휴가는 휴가 종류·세부사유, 외출/외박은 포상·공용 체크란을 보여준다
+function syncTypeFields() {
+  const vacation = currentType() === "휴가";
+  $("vacationFields").hidden = !vacation;
+  $("outingFields").hidden = vacation;
+}
+
+function detail(r) {
+  if (r.type === "휴가") return Object.entries(r.vacation_days || {}).map(([k, n]) => `${k} ${n}`).join("·");
+  return [r.reward && "포상", r.official && "공용"].filter(Boolean).join("·");
+}
+
+document.querySelectorAll("input[name=type]").forEach((el) => el.onchange = () => {
+  syncTypeFields();
+  if (currentType() === "외출") selEnd = null;
+  if (selStart && !isOpen(selStart)) selStart = selEnd = null;   // 바꾼 종류의 종합기간이 아니면 선택 해제
+  render();
+});
+
+$("form").onsubmit = async (e) => {
+  e.preventDefault();
+  if (!selStart) return showMsg("날짜를 선택하세요.");
+  const days = vacationDays();
+  if (currentType() === "휴가" && Object.values(days).reduce((a, b) => a + b, 0) !== selectedDays()) {
+    return showMsg("휴가 종류별 일수 합계를 신청 기간과 맞춰주세요.");
+  }
+  $("submit").disabled = true;
+  const res = await fetch("/api/requests", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      type: currentType(),
+      vacation_days: days,
+      reason: $("reason").value,
+      reward: $("reward").checked,
+      official: $("official").checked,
+      rank: $("rank").value,
+      name: $("name").value,
+      password: $("password").value,
+      start_date: selStart,
+      end_date: selEnd || selStart,
+    }),
+  });
+  $("submit").disabled = false;
+  const data = await res.json();
+  if (!res.ok) return showMsg(data.error);
+  const done = `${data.rank} ${data.name} ${[data.type, detail(data)].filter(Boolean).join("·")} 신청 완료`;
+  if (data.warnings.length) showMsg(`${done} · 출타율 초과: ${data.warnings.join(" / ")}`, "warn");
+  else showMsg(done, "ok");
+  $("password").value = $("reason").value = "";
+  $("reward").checked = $("official").checked = false;
+  document.querySelectorAll(".vday").forEach((el) => el.value = "");
+  focusDate = selStart; selStart = selEnd = null;
+  load();
+};
+
+$("prev").onclick = () => { view.setMonth(view.getMonth() - 1); load(); };
+$("next").onclick = () => { view.setMonth(view.getMonth() + 1); load(); };
+
+syncTypeFields();
+load();
+</script>
+</body>
+</html>
