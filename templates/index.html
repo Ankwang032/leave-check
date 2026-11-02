@@ -4,202 +4,235 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>출타 신청</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css">
+<link rel="stylesheet" href="{{ url_for('static', filename='base.css') }}">
 <style>
-  :root {
-    --bg: #f4f5f0; --card: #fff; --ink: #1f2420; --muted: #6b726c; --line: #dfe2da;
-    --accent: #3d5a3a; --accent-soft: #e3ebdf;
-    --휴가: #c2553d; --외박: #3a6ea5; --외출: #b0882a;
-  }
-  * { box-sizing: border-box; }
-  body { margin: 0; background: var(--bg); color: var(--ink);
-         font: 15px/1.5 "Pretendard", "Apple SD Gothic Neo", "Malgun Gothic", system-ui, sans-serif; }
-  header { padding: 20px 16px 8px; max-width: 1100px; margin: 0 auto; }
-  header h1 { margin: 0; font-size: 22px; }
-  header p { margin: 4px 0 0; color: var(--muted); }
-  main { max-width: 1100px; margin: 0 auto; padding: 12px 16px 40px;
-         display: grid; grid-template-columns: 1fr 340px; gap: 16px; }
-  @media (max-width: 860px) { main { grid-template-columns: 1fr; } }
-  .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 16px; }
+  /* 요약: 출타 상한 + 종합기간 */
+  .overview { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr); gap: 16px; margin-bottom: 16px; }
+  .stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+  .stat { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius);
+          padding: 14px 16px; box-shadow: var(--shadow); display: flex; flex-direction: column; justify-content: space-between; gap: 6px; }
+  .stat span { color: var(--muted); font-size: 12px; }
+  .stat b { font-size: 26px; line-height: 1.1; letter-spacing: -.02em; }
+  .stat b small { font-size: 13px; font-weight: 500; color: var(--muted); margin-left: 3px; letter-spacing: 0; }
+  .stat.wide { grid-column: 1 / -1; }
+  .stat.wide b { font-size: 16px; }
+  .window { display: flex; flex-direction: column; gap: 8px; font-size: 14px; }
+  .wrow { display: flex; gap: 12px; align-items: baseline; }
+  .wlabel { flex: none; width: 64px; font-size: 12px; font-weight: 600; color: var(--muted); }
+  .window .on { display: inline-block; font-size: 11px; font-weight: 600; color: var(--accent);
+                background: var(--accent-soft); border-radius: 99px; padding: 1px 8px; margin-right: 6px; }
+  .window .off { color: var(--muted); }
 
-  .cal-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
-  .cal-head h2 { margin: 0; font-size: 18px; }
-  .cal-head button { border: 1px solid var(--line); background: var(--card); border-radius: 6px;
-                     padding: 4px 12px; cursor: pointer; font-size: 16px; }
-  .grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; }
-  .dow { text-align: center; font-size: 12px; color: var(--muted); padding: 4px 0; }
-  .dow:first-child, .day.sun .num { color: #c2553d; }
-  .dow:last-child, .day.sat .num { color: #3a6ea5; }
-  .day { min-height: 78px; border: 1px solid var(--line); border-radius: 6px; padding: 4px 6px;
-         cursor: pointer; background: var(--card); user-select: none; }
+  main { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 16px; align-items: start; }
+  @media (max-width: 900px) {
+    .overview, main { grid-template-columns: minmax(0, 1fr); }
+  }
+
+  /* 달력 */
+  .cal-head { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; }
+  .cal-head h2 { margin: 0 auto 0 0; font-size: 20px; letter-spacing: -.01em; }
+  .grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 6px; }
+  .dow { text-align: center; font-size: 12px; font-weight: 600; color: var(--muted); padding: 2px 0 4px; }
+  .dow:first-child, .day.sun .num { color: var(--sun); }
+  .dow:last-child, .day.sat .num { color: var(--sat); }
+  .day { min-height: 92px; border: 1px solid var(--line); border-radius: 10px; padding: 6px 7px;
+         cursor: pointer; background: var(--surface); user-select: none; transition: border-color .12s, background .12s; }
   .day:hover { border-color: var(--accent); }
   .day.empty { visibility: hidden; }
-  .day.past, .day.closed { opacity: .4; }
-  .window { margin-top: 12px; padding: 8px 10px; border-radius: 6px; background: var(--accent-soft);
-            font-size: 13px; }
-  .window div + div { margin-top: 2px; }
-  .window b { display: inline-block; min-width: 62px; }
-  .window .off { color: var(--muted); }
-  .day.today .num { background: var(--ink); color: #fff !important; border-radius: 4px; padding: 0 5px; }
+  .day.past, .day.closed { background: var(--surface-2); }
+  .day.past > *, .day.closed > * { opacity: .45; }
+  .day.today .num { background: var(--accent); color: var(--accent-ink) !important; border-radius: 99px; padding: 0 7px; }
+  .day.full { background: var(--danger-soft); border-color: color-mix(in srgb, var(--danger) 35%, var(--line)); }
   .day.sel { background: var(--accent-soft); border-color: var(--accent); }
-  .day.focus { outline: 2px solid var(--accent); outline-offset: -1px; }
-  .num { font-size: 13px; font-weight: 600; }
+  .day.focus { box-shadow: 0 0 0 2px var(--accent); border-color: var(--accent); }
+  .num { display: inline-block; font-size: 13px; font-weight: 700; }
   .counts { margin-top: 4px; display: flex; flex-direction: column; gap: 1px; font-size: 11px; }
-  .counts span::before { content: ""; display: inline-block; width: 7px; height: 7px; border-radius: 50%;
-                         margin-right: 4px; background: var(--c); }
+  .counts span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .counts span::before { content: ""; display: inline-block; width: 6px; height: 6px; border-radius: 50%;
+                         margin-right: 4px; vertical-align: 1px; background: var(--c); }
   .counts .sum { color: var(--muted); }
   .counts .sum::before { display: none; }
-  .counts .full { color: #c2553d; font-weight: 700; }
-  .day.full { background: #fbecea; }
-  .day.full.sel { background: var(--accent-soft); }
-  .limits { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; margin-top: 8px;
-            font-size: 13px; color: var(--muted); }
-  .limits b { color: var(--ink); }
-  .limits a { margin-left: auto; color: var(--muted); }
-  .legend { display: flex; gap: 14px; margin-top: 10px; font-size: 12px; color: var(--muted); }
+  .counts .full { color: var(--danger); font-weight: 700; }
+  .legend { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-top: 14px; font-size: 12px; color: var(--muted); }
   .legend span::before { content: ""; display: inline-block; width: 8px; height: 8px; border-radius: 50%;
-                         margin-right: 5px; background: var(--c); }
+                         margin-right: 6px; background: var(--c); }
+  .legend .box::before { border-radius: 2px; background: var(--c); border: 1px solid var(--b, transparent); }
+  @media (max-width: 560px) {
+    .card.cal { padding: 12px 10px; }
+    .grid { gap: 3px; }
+    .day { min-height: 64px; padding: 3px 4px; border-radius: 7px; }
+    .counts { font-size: 10px; }
+    .counts span::before { display: none; }
+    .stat { padding: 10px 12px; }
+    .stat b { font-size: 20px; }
+  }
 
-  form label { display: block; font-size: 13px; color: var(--muted); margin: 12px 0 4px; }
-  form h3, .list h3 { margin: 0; font-size: 16px; }
-  .types { display: flex; gap: 6px; }
-  .types input { display: none; }
-  .types label { flex: 1; margin: 0; text-align: center; padding: 8px 0; border: 1px solid var(--line);
-                 border-radius: 6px; cursor: pointer; color: var(--ink); font-size: 14px; }
-  .types input:checked + label { background: var(--c); border-color: var(--c); color: #fff; }
-  .vdays { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
-  form .vdays label { margin: 0; display: flex; flex-direction: column; align-items: center; gap: 2px;
-                      color: var(--ink); font-size: 13px; }
-  .vdays input { width: 100%; padding: 6px 4px; border: 1px solid var(--line); border-radius: 6px;
-                 font: inherit; text-align: center; }
-  .vsum { font-size: 12px; margin-top: 4px; color: var(--muted); }
-  .vsum.ok { color: var(--accent); } .vsum.bad { color: #c2553d; }
-  textarea { width: 100%; padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px;
-             font: inherit; resize: vertical; min-height: 56px; }
-  .checks { display: flex; gap: 16px; }
-  form .checks label { display: flex; align-items: center; gap: 6px; margin: 0; color: var(--ink);
-                       font-size: 14px; cursor: pointer; }
-  .checks input { width: 16px; height: 16px; accent-color: var(--accent); }
-  select, input[type=text] { width: 100%; padding: 8px 10px; border: 1px solid var(--line);
-                             border-radius: 6px; font: inherit; background: #fff; }
+  /* 신청서 */
+  .step + .step { margin-top: 18px; padding-top: 16px; border-top: 1px dashed var(--line); }
+  .step-h { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 700; margin-bottom: 10px; }
+  .step-h i { font-style: normal; width: 20px; height: 20px; border-radius: 50%; display: grid; place-items: center;
+              font-size: 11px; background: var(--accent); color: var(--accent-ink); }
+  .lbl { display: block; font-size: 12px; color: var(--muted); margin: 12px 0 5px; }
+  .types { display: flex; gap: 4px; padding: 4px; background: var(--surface-2); border: 1px solid var(--line); border-radius: 10px; }
+  .types input { position: absolute; opacity: 0; pointer-events: none; }
+  .types label { flex: 1; text-align: center; padding: 7px 0; border-radius: 7px; cursor: pointer;
+                 font-size: 14px; font-weight: 600; color: var(--muted); transition: background .12s, color .12s; }
+  .types label:hover { color: var(--ink); }
+  .types input:checked + label { background: var(--c); color: #fff; box-shadow: var(--shadow); }
+  .types input:focus-visible + label { outline: 2px solid var(--c); outline-offset: 2px; }
+  .vdays { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }
+  .vdays label { display: flex; flex-direction: column; align-items: center; gap: 3px; font-size: 12px; color: var(--muted); }
+  .vdays input { width: 100%; text-align: center; padding: 7px 4px; }
+  .vsum { font-size: 12px; margin-top: 6px; color: var(--muted); }
+  .vsum.ok { color: var(--accent); } .vsum.bad { color: var(--danger); }
+  textarea { width: 100%; resize: vertical; min-height: 60px; }
+  .checks { display: flex; gap: 8px; }
+  .checks label { flex: 1; display: flex; align-items: center; gap: 8px; padding: 9px 12px; cursor: pointer;
+                  border: 1px solid var(--line); border-radius: 8px; font-size: 14px; }
+  .checks label:has(input:checked) { border-color: var(--accent); background: var(--accent-soft); }
+  #form select, #form input[type=text], #form input[type=password] { width: 100%; }
   .row { display: flex; gap: 8px; }
-  .row > div { flex: 1; }
-  .range { padding: 8px 10px; background: var(--bg); border-radius: 6px; font-size: 14px; }
-  .hint { font-size: 12px; color: var(--muted); margin-top: 4px; }
-  button.submit { width: 100%; margin-top: 16px; padding: 10px; border: 0; border-radius: 6px;
-                  background: var(--accent); color: #fff; font: inherit; font-weight: 600; cursor: pointer; }
-  button.submit:disabled { opacity: .5; cursor: default; }
-  .msg { font-size: 13px; margin-top: 8px; min-height: 1.2em; }
-  .msg.err { color: #c2553d; } .msg.ok { color: var(--accent); }
-  .msg.warn { color: #9a6a00; }
-  .warn { margin-top: 8px; padding: 8px 10px; border-radius: 6px; background: #fdf3dc; color: #7a5400;
+  .row > div { flex: 1; min-width: 0; }
+  .row .lbl { margin-top: 0; }
+  .range { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-radius: 8px;
+           background: var(--surface-2); border: 1px solid var(--line); font-size: 15px; font-weight: 600; }
+  .range svg { width: 16px; height: 16px; color: var(--muted); flex: none; }
+  .hint { font-size: 12px; color: var(--muted); margin-top: 5px; }
+  .submit { width: 100%; margin-top: 18px; padding: 12px; font-size: 15px; font-weight: 700; }
+  .warn { margin-top: 14px; padding: 10px 12px; border-radius: 8px; background: var(--warn-soft); color: var(--warn);
           font-size: 13px; }
   .warn strong { display: block; margin-bottom: 2px; }
 
+  /* 명단 */
   .side { display: flex; flex-direction: column; gap: 16px; }
-  .list ul { list-style: none; margin: 10px 0 0; padding: 0; }
-  .list li { display: flex; align-items: center; gap: 8px; padding: 6px 0; border-top: 1px solid var(--line);
-             font-size: 14px; }
-  .tag { font-size: 11px; color: #fff; background: var(--c); border-radius: 4px; padding: 1px 6px; }
-  .list .period { color: var(--muted); font-size: 12px; margin-left: auto; }
-  .list .del { border: 0; background: none; color: var(--muted); cursor: pointer; font-size: 16px; }
-  .list .empty { color: var(--muted); font-size: 13px; margin-top: 8px; }
+  .list ul { list-style: none; margin: 0; padding: 0; }
+  .list li { display: flex; align-items: center; gap: 8px; padding: 9px 0; border-top: 1px solid var(--line); font-size: 14px; }
+  .list li:first-child { border-top: 0; padding-top: 0; }
+  .tag { font-size: 11px; font-weight: 600; color: var(--c); background: color-mix(in srgb, var(--c) 14%, transparent);
+         border-radius: 6px; padding: 2px 7px; white-space: nowrap; }
+  .list .period { color: var(--muted); font-size: 12px; margin-left: auto; white-space: nowrap; }
+  .list .del { border: 0; background: none; color: var(--muted); cursor: pointer; font-size: 18px; line-height: 1;
+               width: 26px; height: 26px; border-radius: 6px; flex: none; }
+  .list .del:hover { background: var(--danger-soft); color: var(--danger); }
+  .list .empty { color: var(--muted); font-size: 13px; justify-content: center; padding: 18px 0; }
   .list li.cancel { flex-wrap: wrap; }
   .cancel-box { flex-basis: 100%; display: flex; gap: 6px; }
-  .cancel-box input { flex: 1; padding: 5px 8px; font-size: 13px; }
-  .cancel-box button { border: 1px solid var(--line); background: #fff; border-radius: 6px;
-                       padding: 4px 10px; cursor: pointer; font-size: 13px; }
-  .cancel-box .go { background: #c2553d; border-color: #c2553d; color: #fff; }
-  .cancel-err { flex-basis: 100%; color: #c2553d; font-size: 12px; }
+  .cancel-box input { flex: 1; width: 0; padding: 6px 9px; font-size: 13px; }
+  .cancel-box button { border: 1px solid var(--line); background: var(--surface); color: var(--ink); border-radius: 8px;
+                       padding: 5px 10px; cursor: pointer; font: inherit; font-size: 13px; }
+  .cancel-box .go { background: var(--danger); border-color: var(--danger); color: #fff; }
+  .cancel-err { flex-basis: 100%; color: var(--danger); font-size: 12px; }
 </style>
 </head>
 <body>
-<header>
-  <h1>출타 신청</h1>
-  <p>달력에서 날짜를 고르고 출타 종류와 계급·이름·비밀번호를 입력하세요. 날짜별 출타 인원이 달력에 표시됩니다.</p>
-  <div class="limits" id="limits"></div>
+<header class="topbar">
+  <div class="in">
+    <a class="brand" href="/">
+      <span class="mark"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4M9 15l2 2 4-4"/></svg></span>
+      <h1>출타 신청<small>휴가 · 외박 · 외출</small></h1>
+    </a>
+    <nav><a href="/admin">관리자</a></nav>
+  </div>
 </header>
 
-<main>
-  <section class="card">
-    <div class="cal-head">
-      <button id="prev" aria-label="이전 달">‹</button>
-      <h2 id="title"></h2>
-      <button id="next" aria-label="다음 달">›</button>
-    </div>
-    <div class="grid" id="grid"></div>
-    <div class="legend">
-      {% for t in leave_types %}<span style="--c: var(--{{ t }})">{{ t }}</span>{% endfor %}
+<div class="page">
+  <section class="overview">
+    <div class="stats" id="limits"></div>
+    <div class="card">
+      <h2 class="card-title">종합기간 <span class="sub">접수 중인 기간만 신청할 수 있습니다</span></h2>
+      <div class="window" id="window"></div>
     </div>
   </section>
 
-  <div class="side">
-    <form class="card" id="form">
-      <h3>신청서</h3>
-
-      <label>출타 종류</label>
-      <div class="types">
-        {% for t in leave_types %}
-        <input type="radio" name="type" id="t{{ loop.index }}" value="{{ t }}" {% if loop.first %}checked{% endif %}>
-        <label for="t{{ loop.index }}" style="--c: var(--{{ t }})">{{ t }}</label>
-        {% endfor %}
+  <main>
+    <section class="card cal">
+      <div class="cal-head">
+        <h2 id="title"></h2>
+        <button class="btn icon" id="prev" aria-label="이전 달">‹</button>
+        <button class="btn icon" id="next" aria-label="다음 달">›</button>
       </div>
-
-      <div id="vacationFields">
-        <label>휴가 종류별 일수</label>
-        <div class="vdays">
-          {% for k in vacation_kinds %}
-          <label>{{ k }}<input type="number" class="vday" data-kind="{{ k }}" min="0" max="100" placeholder="0"></label>
-          {% endfor %}
-        </div>
-        <div class="vsum" id="vsum"></div>
-        <label for="reason">세부사유</label>
-        <textarea id="reason" maxlength="100" placeholder="예: 분기 연가, ○○ 포상 (관리자만 볼 수 있습니다)"></textarea>
+      <div class="grid" id="grid"></div>
+      <div class="legend">
+        {% for t in leave_types %}<span style="--c: var(--{{ t }})">{{ t }}</span>{% endfor %}
+        <span class="box" style="--c: var(--danger-soft); --b: var(--danger)">출타율 초과</span>
+        <span class="box" style="--c: var(--surface-2); --b: var(--line)">접수 불가</span>
       </div>
-
-      <div id="outingFields" hidden>
-        <label>구분</label>
-        <div class="checks">
-          <label><input type="checkbox" id="reward"> 포상</label>
-          <label><input type="checkbox" id="official"> 공용</label>
-        </div>
-      </div>
-
-      <div class="window" id="window"></div>
-
-      <label>날짜</label>
-      <div class="range" id="range">달력에서 날짜를 선택하세요</div>
-      <div class="hint" id="hint"></div>
-
-      <div class="row">
-        <div>
-          <label for="rank">계급</label>
-          <select id="rank" required>
-            <option value="">선택</option>
-            {% for r in ranks %}<option>{{ r }}</option>{% endfor %}
-          </select>
-        </div>
-        <div>
-          <label for="name">이름</label>
-          <input type="text" id="name" maxlength="20" placeholder="홍길동" required>
-        </div>
-      </div>
-
-      <label for="password">비밀번호</label>
-      <input type="password" id="password" minlength="4" maxlength="30" placeholder="4자 이상" required>
-      <div class="hint">신청을 취소할 때 이 비밀번호로 본인을 확인합니다.</div>
-
-      <div class="warn" id="warn" hidden></div>
-
-      <button class="submit" id="submit">신청하기</button>
-      <div class="msg" id="msg"></div>
-    </form>
-
-    <section class="card list">
-      <h3 id="listTitle">출타자 명단</h3>
-      <ul id="list"></ul>
     </section>
-  </div>
-</main>
+
+    <div class="side">
+      <form class="card" id="form">
+        <h2 class="card-title">신청서</h2>
+
+        <div class="step">
+          <div class="step-h"><i>1</i>출타 종류</div>
+          <div class="types">
+            {% for t in leave_types %}
+            <input type="radio" name="type" id="t{{ loop.index }}" value="{{ t }}" {% if loop.first %}checked{% endif %}>
+            <label for="t{{ loop.index }}" style="--c: var(--{{ t }})">{{ t }}</label>
+            {% endfor %}
+          </div>
+
+          <div id="vacationFields">
+            <span class="lbl">휴가 종류별 일수</span>
+            <div class="vdays">
+              {% for k in vacation_kinds %}
+              <label>{{ k }}<input type="number" class="vday" data-kind="{{ k }}" min="0" max="100" placeholder="0"></label>
+              {% endfor %}
+            </div>
+            <div class="vsum" id="vsum"></div>
+            <label class="lbl" for="reason">세부사유 <span class="muted">(선택 · 관리자만 열람)</span></label>
+            <textarea id="reason" maxlength="100" placeholder="예: 분기 연가, ○○ 포상"></textarea>
+          </div>
+
+          <div id="outingFields" hidden>
+            <span class="lbl">구분</span>
+            <div class="checks">
+              <label><input type="checkbox" id="reward"> 포상</label>
+              <label><input type="checkbox" id="official"> 공용</label>
+            </div>
+          </div>
+        </div>
+
+        <div class="step">
+          <div class="step-h"><i>2</i>날짜</div>
+          <div class="range"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg><span id="range">달력에서 날짜를 선택하세요</span></div>
+          <div class="hint" id="hint"></div>
+        </div>
+
+        <div class="step">
+          <div class="step-h"><i>3</i>신청자</div>
+          <div class="row">
+            <div>
+              <label class="lbl" for="rank">계급</label>
+              <select id="rank" required>
+                <option value="">선택</option>
+                {% for r in ranks %}<option>{{ r }}</option>{% endfor %}
+              </select>
+            </div>
+            <div>
+              <label class="lbl" for="name">이름</label>
+              <input type="text" id="name" maxlength="20" placeholder="홍길동" required>
+            </div>
+          </div>
+          <label class="lbl" for="password">비밀번호</label>
+          <input type="password" id="password" minlength="4" maxlength="30" placeholder="4자 이상" required>
+          <div class="hint">신청을 취소할 때 이 비밀번호로 본인을 확인합니다.</div>
+        </div>
+
+        <div class="warn" id="warn" hidden></div>
+
+        <button class="btn primary submit" id="submit">신청하기</button>
+        <div class="msg" id="msg"></div>
+      </form>
+
+      <section class="card list">
+        <h2 class="card-title" id="listTitle">출타자 명단</h2>
+        <ul id="list"></ul>
+      </section>
+    </div>
+  </main>
+</div>
 
 <script>
 const $ = (id) => document.getElementById(id);
@@ -234,12 +267,11 @@ async function load() {
 
 function renderLimits() {
   const s = settings;
-  $("limits").innerHTML = (s.strength
-    ? `<span>총원 <b>${s.strength}명</b></span>
-       <span>휴가 최대 <b>${s.vacation_max}명</b> (${s.vacation_limit}%)</span>
-       <span>전체 출타 최대 <b>${s.total_max}명</b> (${s.total_limit}%)</span>`
-    : `<span>총원이 아직 설정되지 않아 출타율 제한이 적용되지 않습니다.</span>`)
-    + `<a href="/admin">관리자</a>`;
+  $("limits").innerHTML = s.strength
+    ? `<div class="stat"><span>부대 총원</span><b>${s.strength}<small>명</small></b></div>
+       <div class="stat"><span>휴가 최대</span><b>${s.vacation_max}<small>명 · ${s.vacation_limit}%</small></b></div>
+       <div class="stat"><span>전체 출타 최대</span><b>${s.total_max}<small>명 · ${s.total_limit}%</small></b></div>`
+    : `<div class="stat wide"><span>출타율</span><b>총원이 아직 설정되지 않아 제한이 적용되지 않습니다.</b></div>`;
 }
 
 function onDate(dateIso) {
@@ -321,13 +353,14 @@ function renderWindow() {
   if (!w.enabled) { $("window").innerHTML = `<div class="off">종합기간 제한 없이 신청할 수 있습니다.</div>`; return; }
   const day = (s) => `${fmt(s)}(${"일월화수목금토"[parse(s).getDay()]})`;
   const outing = st.outing_open.length
-    ? st.outing_open.map((r) => `${day(r.from)}~${day(r.to)} 출타분 (${day(r.close)}까지)`).join("<br><b></b>")
+    ? st.outing_open.map((r) => `<span class="on">접수 중</span>${day(r.from)}~${day(r.to)} 출타분 · ${day(r.close)} 마감`).join("<br>")
     : `<span class="off">종합 기간 아님 · 다음 종합 ${day(st.next_outing.open)}~${day(st.next_outing.close)}</span>`;
   const vacation = st.vacation_open.length
-    ? st.vacation_open.map((r) => `${+r.from.slice(5, 7)}월분 (${day(r.close)}까지)`).join(", ")
+    ? st.vacation_open.map((r) => `<span class="on">접수 중</span>${+r.from.slice(5, 7)}월분 · ${day(r.close)} 마감`).join("<br>")
     : `<span class="off">종합 기간 아님 · 다음 종합 ${day(st.next_vacation.open)}~${day(st.next_vacation.close)}
        (${+st.next_vacation.from.slice(5, 7)}월분)</span>`;
-  $("window").innerHTML = `<div><b>외출/외박</b>${outing}</div><div><b>휴가</b>${vacation}</div>`;
+  const row = (label, html) => `<div class="wrow"><span class="wlabel">${label}</span><span>${html}</span></div>`;
+  $("window").innerHTML = row("외출/외박", outing) + row("휴가", vacation);
 }
 
 function renderRange() {
