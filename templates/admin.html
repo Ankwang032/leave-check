@@ -171,7 +171,7 @@ document.getElementById("loginForm").onsubmit = async (e) => {
           <tr id="heads">
             <th class="sort" data-key="type">종류</th>
             <th class="sort" data-key="detail">구분</th>
-            <th>세부사유</th>
+            <th>세부사유·포상 내용</th>
             <th class="sort" data-key="rank">계급</th>
             <th class="sort" data-key="name">이름</th>
             <th class="sort" data-key="start_date">시작일</th>
@@ -194,10 +194,11 @@ const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&
 const TYPES = {{ leave_types | tojson }};
 const RANKS = {{ ranks | tojson }};
 const VACATION_KINDS = {{ vacation_kinds | tojson }};
+const OUTING_ROUNDS = {{ outing_rounds | tojson }};
 
 function detail(r) {
   if (r.type === "휴가") return Object.entries(r.vacation_days || {}).map(([k, n]) => `${k} ${n}`).join("·");
-  return [r.reward && "포상", r.official && "공용"].filter(Boolean).join("·");
+  return [r.outing_round && `${r.outing_round}차`, r.reward && "포상", r.official && "공용"].filter(Boolean).join("·");
 }
 
 let view = new Date(); view.setDate(1);
@@ -297,12 +298,16 @@ function renderRows() {
               value="${(r.vacation_days || {})[k] || ""}"></label>`).join("")}
         </div>
         <div class="checks o-only" ${r.type === "휴가" ? "hidden" : ""}>
+          <select name="outing_round">
+            <option value="0">차수 없음</option>
+            ${OUTING_ROUNDS.map((n) => `<option value="${n}" ${r.outing_round === n ? "selected" : ""}>${n}차</option>`).join("")}
+          </select>
           <label><input type="checkbox" name="reward" ${r.reward ? "checked" : ""}>포상</label>
           <label><input type="checkbox" name="official" ${r.official ? "checked" : ""}>공용</label>
         </div>
       </td>
-      <td><input type="text" class="reason v-only" name="reason" value="${esc(r.reason)}" maxlength="100"
-                 ${r.type === "휴가" ? "" : "hidden"}></td>
+      <td><input type="text" class="reason" name="reason" value="${esc(r.reason)}" maxlength="100"
+                 placeholder="${r.type === "휴가" ? "세부사유" : "포상 내용 (포상일 때만 저장)"}"></td>
       <td><select name="rank">${options(RANKS, r.rank)}</select></td>
       <td><input type="text" name="name" value="${esc(r.name)}" maxlength="20"></td>
       <td><input type="date" name="start_date" value="${r.start_date}"></td>
@@ -322,6 +327,7 @@ function renderRows() {
 async function save(tr) {
   const body = {};
   tr.querySelectorAll("[name]").forEach((el) => body[el.name] = el.type === "checkbox" ? el.checked : el.value);
+  body.outing_round = +(body.outing_round || 0);
   body.vacation_days = {};
   tr.querySelectorAll(".vd").forEach((el) => { if (+el.value) body.vacation_days[el.dataset.kind] = +el.value; });
   const res = await fetch(`/api/requests/${tr.dataset.id}`, {
@@ -342,6 +348,7 @@ $("rows").oninput = (e) => {
     const vacation = e.target.value === "휴가";
     tr.querySelectorAll(".v-only").forEach((el) => el.hidden = !vacation);
     tr.querySelectorAll(".o-only").forEach((el) => el.hidden = vacation);
+    tr.querySelector("input[name=reason]").placeholder = vacation ? "세부사유" : "포상 내용 (포상일 때만 저장)";
   }
 };
 $("rows").onclick = async (e) => {

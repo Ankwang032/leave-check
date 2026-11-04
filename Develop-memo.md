@@ -1,6 +1,6 @@
 # 출타 신청 웹사이트 개발 메모
 
-부대 출타율 조정을 위한 휴가/외박/외출 신청 사이트. 마지막 정리: 2026-11-02
+부대 출타율 조정을 위한 휴가/외박/외출 신청 사이트. 마지막 정리: 2026-11-04
 
 ## 실행
 
@@ -12,6 +12,8 @@ ADMIN_PASSWORD='관리자비밀번호' python app.py   # http://localhost:5000
 - 관리자 페이지: `/admin` (환경변수 `ADMIN_PASSWORD`, 없으면 기본값 `1234`)
 - 데이터: `leave.db` (SQLite, 첫 실행 시 자동 생성 · git 제외)
 - 세션 키: 환경변수 `SECRET_KEY`, 없으면 `.secret_key` 파일 자동 생성 (git 제외)
+- 테스트: `pip install -r requirements-dev.txt` 후 `python -m pytest` (Postgres는 `TEST_DATABASE_URL`로)
+- 배포: Vercel 프로젝트 `leave-check` + Neon Postgres. `develop` push → 프리뷰(비공개), `main` → production(공개). 자세한 내용은 README
 
 ## 파일 구성
 
@@ -22,6 +24,8 @@ ADMIN_PASSWORD='관리자비밀번호' python app.py   # http://localhost:5000
 | `templates/admin.html` | 관리자 화면 (총원, 종합기간, 명단 출력, 신청 목록 수정·삭제·정렬) |
 | `templates/print.html` | 인쇄용 출타 명단 (A4) |
 | `static/base.css` | 신청·관리자 화면 공통 스타일 (색상 토큰, 상단 바, 카드, 버튼, 입력칸). 시스템 다크 모드 지원 |
+| `tests/` | pytest 테스트 (`conftest.py`: 임시 DB, 날짜 고정, 관리자 로그인 픽스처) |
+| `vercel.json`, `.vercelignore` | Vercel 설정 (Flask 프리셋), 배포 제외 파일 |
 
 ## 구현된 기능
 
@@ -29,7 +33,7 @@ ADMIN_PASSWORD='관리자비밀번호' python app.py   # http://localhost:5000
 - 달력에서 날짜 선택 → 출타 종류(휴가/외박/외출) → 계급·이름·비밀번호 입력
   - 휴가·외박: 시작일 → 종료일 순서로 클릭, 외출: 하루만
 - **휴가**: 연가/보상/포상/위로 종류별 일수 입력. 합계가 신청 기간(일수)과 같아야 신청됨. 세부사유(선택, 100자)
-- **외출/외박**: 포상·공용 체크
+- **외출/외박**: 차수(1차/2차, 선택), 포상·공용 체크. 포상이면 포상 내용(선택, 100자, 관리자만 열람) 입력
 - 날짜 칸에 종류별 인원, `계 n/최대`, 공용 인원 표시. 꽉 찬 날은 빨간색
 - 날짜를 누르면 그날 출타자 명단. ×와 신청 비밀번호로 본인 취소
 - 세부사유는 관리자만 볼 수 있음 (일반 API 응답에서 제외)
@@ -80,6 +84,10 @@ ADMIN_PASSWORD='관리자비밀번호' python app.py   # http://localhost:5000
 - 관리자 삭제는 별도 경로 `DELETE /api/admin/requests/<id>`
 - 관리자 수정은 종합기간을 확인하지 않고, 출타율 초과는 안내만 함
 - 같은 사람의 기간 중복 신청은 막지 않음 (군번을 없애면서 이름만으로는 동명이인과 구분할 수 없어서)
+- **포상 내용은 `reason` 칸에 저장**: 휴가 세부사유와 같은 칸을 써서 관리자 전용 열람·인쇄 비고를 그대로 활용. 외출/외박에서 포상이 아니면 저장하지 않음
+- **DB는 로컬 SQLite / 배포 Postgres 겸용**: `Database` 래퍼가 `?` 자리표시자를 Postgres용 `%s`로 바꿈. SQL은 두 DB에서 모두 되는 문법만 사용 (`ON CONFLICT ... DO UPDATE`, `RETURNING id`)
+- **날짜는 한국 시간(KST) 기준**: Vercel 서버는 UTC라서 `today()`/`now()`가 UTC+9로 계산. 그렇지 않으면 오전 0~9시에 종합기간 판단이 하루 어긋남
+- **배포 환경에서는 `ADMIN_PASSWORD`·`SECRET_KEY`가 없으면 시작하지 않음**: 기본 비밀번호 `1234`로 공개되는 것을 막기 위해
 
 ## 데이터 구조
 
@@ -91,14 +99,15 @@ ADMIN_PASSWORD='관리자비밀번호' python app.py   # http://localhost:5000
 | `password_hash` | 신청 비밀번호 해시 (취소용) |
 | `type` | 휴가 / 외박 / 외출 |
 | `vacation_days` | 휴가 종류별 일수 JSON, 예: `{"연가": 3, "포상": 2}` |
-| `reason` | 휴가 세부사유 |
+| `reason` | 휴가 세부사유 또는 외출/외박 포상 내용 (관리자만 열람) |
 | `reward`, `official` | 외출/외박 포상, 공용 (0/1) |
+| `outing_round` | 외출/외박 차수 (0 = 선택 안 함, 1, 2) |
 | `start_date`, `end_date` | `YYYY-MM-DD` |
 | `created_at` | 신청 일시 |
 
 `settings` 테이블(key/value): `strength`(총원), `window`(종합기간 설정 JSON)
 
-이전 버전 DB는 서버 시작 시 `init_db()`가 자동 보정함. 컬럼을 추가하고, 휴가 종류를 하나만 저장하던 `vacation_kind`는 `vacation_days`로 옮김. 예전 `service_number`(군번) 컬럼은 남아 있어도 무시함.
+이전 버전 DB는 서버 시작 시 `init_db()`가 자동 보정함 (Postgres는 `ADD COLUMN IF NOT EXISTS`). 컬럼을 추가하고, 휴가 종류를 하나만 저장하던 `vacation_kind`는 `vacation_days`로 옮김. 예전 `service_number`(군번) 컬럼은 남아 있어도 무시함.
 
 ## API 요약
 
@@ -117,12 +126,12 @@ ADMIN_PASSWORD='관리자비밀번호' python app.py   # http://localhost:5000
 
 ## 남은 과제 / 아이디어
 
-- 배포 (PythonAnywhere 등) 및 운영용 관리자 비밀번호 설정
-- 이름·출타 일정이 외부에 공개되므로 부대 보안 규정 확인 필요
+- production 공개: 부대 보안 규정 확인 → Production 환경에 `ADMIN_PASSWORD`·`SECRET_KEY` 추가 → 테스트 데이터 삭제 → `main` 병합
 - 같은 사람의 중복 신청 방지 (필요하면 이름+계급 기준 경고)
 - 엑셀(CSV) 내보내기, 날짜별 출타 인원 집계표
 - 신청 화면의 출타율 초과 안내는 화면에 불러온 달 기준으로 계산함. 다음 달로 넘어가는 기간은 신청 후 서버 안내로 확인
-- 자동화된 테스트 코드 없음 (지금까지는 Flask 테스트 클라이언트로 수동 확인)
+- 화면(JS) 동작은 자동 테스트가 없음. 서버 API만 pytest로 확인
+- 이 Codespace에서는 Vercel CLI 연결이 가끔 `ECONNRESET`으로 끊김 (`fetch failed`). 다시 시도하면 됨
 
 ## 작업 기록
 
@@ -130,3 +139,4 @@ ADMIN_PASSWORD='관리자비밀번호' python app.py   # http://localhost:5000
 |---|---|
 | 2026-11-01 | 출타 신청 웹사이트 구현 (신청 화면, 관리자 화면, 출타율, 종합기간, 명단 출력) |
 | 2026-11-02 | 화면 디자인 개편: 공통 스타일 `static/base.css` 분리, 상단 바 · 요약 영역 · 단계형 신청서, 다크 모드, 파랑 계열 색상 |
+| 2026-11-04 | pytest 테스트 추가, Postgres 지원 · KST 날짜 처리 · Vercel(Neon) 프리뷰 배포, 외출/외박 차수 · 포상 내용 입력칸, README 정리 |

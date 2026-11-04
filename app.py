@@ -3,7 +3,7 @@ import json
 import os
 import secrets
 import sqlite3
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from functools import wraps
 from pathlib import Path
 
@@ -11,16 +11,23 @@ from flask import Flask, g, jsonify, redirect, render_template, request, session
 from werkzeug.security import check_password_hash, generate_password_hash
 
 BASE_DIR = Path(__file__).parent
-DB_PATH = BASE_DIR / "leave.db"
+DB_PATH = Path(os.environ.get("LEAVE_DB_PATH") or BASE_DIR / "leave.db")
 SECRET_PATH = BASE_DIR / ".secret_key"
+# 배포 환경(Vercel 등)에서는 Postgres 주소를 받고, 없으면 로컬 SQLite 파일을 쓴다
+DATABASE_URL = os.environ.get("DATABASE_URL") or os.environ.get("POSTGRES_URL")
+ON_VERCEL = bool(os.environ.get("VERCEL"))
+KST = timezone(timedelta(hours=9))  # 서버 시간대(Vercel은 UTC)와 무관하게 한국 날짜로 판단한다
 
 LEAVE_TYPES = ["휴가", "외박", "외출"]
 VACATION_KINDS = ["연가", "보상", "포상", "위로"]
+OUTING_ROUNDS = [1, 2]  # 외출/외박 차수 (0은 선택 안 함)
 RANKS = ["이병", "일병", "상병", "병장", "하사", "중사", "상사",
          "준위", "소위", "중위", "대위"]
 VACATION_LIMIT = 20  # 휴가 출타율 상한(%)
 TOTAL_LIMIT = 35     # 휴가+외박+외출 출타율 상한(%)
 
+if ON_VERCEL and not os.environ.get("ADMIN_PASSWORD"):
+    raise RuntimeError("배포 환경에서는 ADMIN_PASSWORD 환경변수를 설정해야 합니다.")
 ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "1234")
 
 # 종합기간 기본값: 다음주 수~다다음주 화 외출/외박을 금주 화~다음주 수에, 다음 달 휴가를 이번 달 20~28일에 접수
@@ -36,8 +43,10 @@ WEEKDAYS = "월화수목금토일"
 
 
 def load_secret_key():
-    if "SECRET_KEY" in os.environ:
+    if os.environ.get("SECRET_KEY"):
         return os.environ["SECRET_KEY"]
+    if ON_VERCEL:  # 배포 환경은 파일을 저장할 수 없고 인스턴스마다 키가 달라지면 로그인이 풀린다
+        raise RuntimeError("배포 환경에서는 SECRET_KEY 환경변수를 설정해야 합니다.")
     if not SECRET_PATH.exists():
         SECRET_PATH.write_text(secrets.token_hex(32))
     return SECRET_PATH.read_text()
@@ -45,12 +54,47 @@ def load_secret_key():
 
 app = Flask(__name__)
 app.secret_key = load_secret_key()
+app.config["SESSION_COOKIE_SECURE"] = ON_VERCEL
+
+
+def today():
+    return datetime.now(KST).date()
+
+
+def now():
+    return datetime.now(KST).replace(tzinfo=None)
+
+
+class Database:
+    """로컬 SQLite와 배포용 Postgres를 같은 코드로 쓰기 위한 얇은 래퍼.
+    SQL은 ? 자리표시자로 쓰고, Postgres에서는 %s로 바꿔 실행한다."""
+
+    def __init__(self):
+        self.postgres = bool(DATABASE_URL)
+        if self.postgres:
+            import psycopg
+            from psycopg.rows import dict_row
+            # prepare_threshold=None: Neon 연결 풀러(PgBouncer)에서 준비된 문장 충돌을 피한다
+            self.conn = psycopg.connect(DATABASE_URL, row_factory=dict_row, prepare_threshold=None)
+        else:
+            self.conn = sqlite3.connect(DB_PATH)
+            self.conn.row_factory = sqlite3.Row
+
+    def execute(self, sql, params=()):
+        if self.postgres:
+            sql = sql.replace("?", "%s")
+        return self.conn.execute(sql, params)
+
+    def commit(self):
+        self.conn.commit()
+
+    def close(self):
+        self.conn.close()
 
 
 def get_db():
     if "db" not in g:
-        g.db = sqlite3.connect(DB_PATH)
-        g.db.row_factory = sqlite3.Row
+        g.db = Database()
     return g.db
 
 
@@ -61,7 +105,42 @@ def close_db(_exc):
         db.close()
 
 
+POSTGRES_SCHEMA = [
+    """
+    CREATE TABLE IF NOT EXISTS requests (
+        id SERIAL PRIMARY KEY,
+        rank TEXT NOT NULL,
+        name TEXT NOT NULL,
+        password_hash TEXT NOT NULL DEFAULT '',
+        type TEXT NOT NULL,
+        vacation_days TEXT NOT NULL DEFAULT '',
+        reason TEXT NOT NULL DEFAULT '',
+        reward INTEGER NOT NULL DEFAULT 0,
+        official INTEGER NOT NULL DEFAULT 0,
+        outing_round INTEGER NOT NULL DEFAULT 0,
+        start_date TEXT NOT NULL,
+        end_date TEXT NOT NULL,
+        created_at TEXT NOT NULL
+    )
+    """,
+    "ALTER TABLE requests ADD COLUMN IF NOT EXISTS outing_round INTEGER NOT NULL DEFAULT 0",
+    "CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)",
+    "CREATE INDEX IF NOT EXISTS requests_dates ON requests (start_date, end_date)",
+]
+
+
 def init_db():
+    if DATABASE_URL:
+        db = Database()
+        try:
+            # 여러 서버 인스턴스가 동시에 시작해도 테이블 생성이 겹치지 않게 잠근다
+            db.execute("SELECT pg_advisory_xact_lock(20261101)")
+            for sql in POSTGRES_SCHEMA:
+                db.execute(sql)
+            db.commit()
+        finally:
+            db.close()
+        return
     with sqlite3.connect(DB_PATH) as db:
         db.execute("""
             CREATE TABLE IF NOT EXISTS requests (
@@ -74,6 +153,7 @@ def init_db():
                 reason TEXT NOT NULL DEFAULT '',
                 reward INTEGER NOT NULL DEFAULT 0,
                 official INTEGER NOT NULL DEFAULT 0,
+                outing_round INTEGER NOT NULL DEFAULT 0,
                 start_date TEXT NOT NULL,
                 end_date TEXT NOT NULL,
                 created_at TEXT NOT NULL
@@ -86,7 +166,8 @@ def init_db():
                             ("vacation_days", "TEXT NOT NULL DEFAULT ''"),
                             ("reason", "TEXT NOT NULL DEFAULT ''"),
                             ("reward", "INTEGER NOT NULL DEFAULT 0"),
-                            ("official", "INTEGER NOT NULL DEFAULT 0")]:
+                            ("official", "INTEGER NOT NULL DEFAULT 0"),
+                            ("outing_round", "INTEGER NOT NULL DEFAULT 0")]:
             if column not in columns:
                 db.execute(f"ALTER TABLE requests ADD COLUMN {column} {ddl}")
         # 휴가 종류를 하나만 저장하던 이전 신청은 전체 일수를 그 종류로 옮긴다
@@ -222,11 +303,13 @@ def public_row(row):
 
 
 def detail_label(row):
-    """휴가 종류별 일수(예: 연가 3·포상 2) 또는 외출/외박의 포상·공용 표시."""
+    """휴가 종류별 일수(예: 연가 3·포상 2) 또는 외출/외박의 차수·포상·공용(예: 1차·포상) 표시."""
     if row["type"] == "휴가":
         days = json.loads(row["vacation_days"] or "{}")
         return "·".join(f"{k} {days[k]}" for k in VACATION_KINDS if k in days)
-    return "·".join(t for t, on in [("포상", row["reward"]), ("공용", row["official"])] if on)
+    parts = [f"{row['outing_round']}차"] if row["outing_round"] else []
+    parts += [t for t, on in [("포상", row["reward"]), ("공용", row["official"])] if on]
+    return "·".join(parts)
 
 
 def parse_request(data):
@@ -251,9 +334,11 @@ def parse_request(data):
     if leave_type == "외출" and start != end:
         return None, "외출은 하루만 선택할 수 있습니다."
 
-    # 휴가는 종류별 일수와 세부사유, 외출/외박은 포상·공용 여부만 저장한다
+    # 휴가는 종류별 일수와 세부사유, 외출/외박은 차수·포상·공용과 포상 내용을 저장한다
+    # (포상 내용은 세부사유와 같은 reason 칸에 저장해 관리자만 본다)
     vacation_days, reason = {}, ""
     reward = official = False
+    outing_round = 0
     if leave_type == "휴가":
         raw = data.get("vacation_days")
         if not isinstance(raw, dict) or any(k not in VACATION_KINDS for k in raw):
@@ -273,10 +358,17 @@ def parse_request(data):
             return None, "세부사유는 100자 이내로 입력하세요."
     else:
         reward, official = data.get("reward") is True, data.get("official") is True
+        outing_round = data.get("outing_round") or 0
+        if isinstance(outing_round, bool) or outing_round not in [0, *OUTING_ROUNDS]:
+            return None, "차수를 선택하세요."
+        if reward:
+            reason = (data.get("reason") or "").strip()
+            if len(reason) > 100:
+                return None, "포상 내용은 100자 이내로 입력하세요."
 
     return {"rank": rank, "name": name, "type": leave_type,
             "vacation_days": json.dumps(vacation_days, ensure_ascii=False), "reason": reason,
-            "reward": int(reward), "official": int(official),
+            "reward": int(reward), "official": int(official), "outing_round": outing_round,
             "start_date": start, "end_date": end}, None
 
 
@@ -318,13 +410,14 @@ def capacity_warnings(req, exclude_id=None):
 
 @app.get("/")
 def index():
-    return render_template("index.html", leave_types=LEAVE_TYPES, ranks=RANKS, vacation_kinds=VACATION_KINDS)
+    return render_template("index.html", leave_types=LEAVE_TYPES, ranks=RANKS, vacation_kinds=VACATION_KINDS,
+                           outing_rounds=OUTING_ROUNDS)
 
 
 @app.get("/admin")
 def admin_page():
     return render_template("admin.html", leave_types=LEAVE_TYPES, ranks=RANKS,
-                           vacation_kinds=VACATION_KINDS, logged_in=is_admin())
+                           vacation_kinds=VACATION_KINDS, outing_rounds=OUTING_ROUNDS, logged_in=is_admin())
 
 
 PRINT_KINDS = {"all": ("전체", LEAVE_TYPES), "vacation": ("휴가", ["휴가"]), "outing": ("외출/외박", ["외박", "외출"])}
@@ -362,14 +455,14 @@ def admin_print():
     return render_template(
         "print.html", title=title, items=items, counts=counts,
         start=label(start), end=label(end), year=start.year,
-        printed=datetime.now().strftime("%Y.%m.%d %H:%M"),
+        printed=now().strftime("%Y.%m.%d %H:%M"),
     )
 
 
 @app.get("/api/settings")
 def get_settings():
     w = get_window()
-    return jsonify(limits(get_strength()) | {"window": w, "status": window_status(date.today(), w)})
+    return jsonify(limits(get_strength()) | {"window": w, "status": window_status(today(), w)})
 
 
 @app.put("/api/settings/window")
@@ -398,9 +491,10 @@ def update_window():
         return jsonify(error="휴가 접수 마감일이 시작일보다 빠릅니다."), 400
 
     db = get_db()
-    db.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('window', ?)", (json.dumps(w),))
+    db.execute("INSERT INTO settings (key, value) VALUES ('window', ?) "
+               "ON CONFLICT (key) DO UPDATE SET value = excluded.value", (json.dumps(w),))
     db.commit()
-    return jsonify(window=w, status=window_status(date.today(), w))
+    return jsonify(window=w, status=window_status(today(), w))
 
 
 @app.put("/api/settings")
@@ -410,7 +504,8 @@ def update_settings():
     if not isinstance(strength, int) or not 0 <= strength <= 10000:
         return jsonify(error="총원을 0~10000 사이 숫자로 입력하세요."), 400
     db = get_db()
-    db.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('strength', ?)", (str(strength),))
+    db.execute("INSERT INTO settings (key, value) VALUES ('strength', ?) "
+               "ON CONFLICT (key) DO UPDATE SET value = excluded.value", (str(strength),))
     db.commit()
     return jsonify(limits(strength))
 
@@ -438,9 +533,9 @@ def create_request():
     if not 4 <= len(password) <= 30:
         return jsonify(error="비밀번호를 4~30자로 입력하세요."), 400
     # 신청 화면은 관리자로 로그인돼 있어도 같은 규칙을 적용한다
-    if req["start_date"] < date.today():
+    if req["start_date"] < today():
         return jsonify(error="지난 날짜는 신청할 수 없습니다."), 400
-    error = window_error(req, date.today())
+    error = window_error(req, today())
     if error:
         return jsonify(error=error), 400
     # 출타율을 넘어도 신청은 받고, 초과 사실을 함께 알려준다
@@ -449,14 +544,15 @@ def create_request():
     db = get_db()
     cur = db.execute(
         "INSERT INTO requests (rank, name, password_hash, type, vacation_days, reason, reward, official, "
-        "start_date, end_date, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "outing_round, start_date, end_date, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id",
         (req["rank"], req["name"], generate_password_hash(password), req["type"],
-         req["vacation_days"], req["reason"], req["reward"], req["official"],
+         req["vacation_days"], req["reason"], req["reward"], req["official"], req["outing_round"],
          req["start_date"].isoformat(), req["end_date"].isoformat(),
-         datetime.now().isoformat(timespec="seconds")),
+         now().isoformat(timespec="seconds")),
     )
+    new_id = cur.fetchone()["id"]
     db.commit()
-    row = db.execute("SELECT * FROM requests WHERE id = ?", (cur.lastrowid,)).fetchone()
+    row = db.execute("SELECT * FROM requests WHERE id = ?", (new_id,)).fetchone()
     return jsonify(public_row(row) | {"warnings": warnings}), 201
 
 
@@ -473,9 +569,9 @@ def update_request(request_id):
 
     db.execute(
         "UPDATE requests SET rank = ?, name = ?, type = ?, vacation_days = ?, reason = ?, "
-        "reward = ?, official = ?, start_date = ?, end_date = ? WHERE id = ?",
+        "reward = ?, official = ?, outing_round = ?, start_date = ?, end_date = ? WHERE id = ?",
         (req["rank"], req["name"], req["type"], req["vacation_days"], req["reason"],
-         req["reward"], req["official"], req["start_date"].isoformat(), req["end_date"].isoformat(), request_id),
+         req["reward"], req["official"], req["outing_round"], req["start_date"].isoformat(), req["end_date"].isoformat(), request_id),
     )
     db.commit()
     row = db.execute("SELECT * FROM requests WHERE id = ?", (request_id,)).fetchone()

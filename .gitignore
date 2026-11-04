@@ -3,3 +3,6 @@ __pycache__/
 leave.db
 .secret_key
 .venv/
+.vercel
+.env*
+.pytest_cache/

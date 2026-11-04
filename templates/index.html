@@ -186,10 +186,19 @@
           </div>
 
           <div id="outingFields" hidden>
+            <label class="lbl" for="round">차수</label>
+            <select id="round">
+              <option value="0">선택 안 함</option>
+              {% for n in outing_rounds %}<option value="{{ n }}">{{ n }}차</option>{% endfor %}
+            </select>
             <span class="lbl">구분</span>
             <div class="checks">
               <label><input type="checkbox" id="reward"> 포상</label>
               <label><input type="checkbox" id="official"> 공용</label>
+            </div>
+            <div id="rewardFields" hidden>
+              <label class="lbl" for="rewardReason">포상 내용 <span class="muted">(관리자만 열람)</span></label>
+              <input type="text" id="rewardReason" maxlength="100" placeholder="예: 체력검정 특급 포상, 분대장 포상">
             </div>
           </div>
         </div>
@@ -488,8 +497,11 @@ function syncTypeFields() {
 
 function detail(r) {
   if (r.type === "휴가") return Object.entries(r.vacation_days || {}).map(([k, n]) => `${k} ${n}`).join("·");
-  return [r.reward && "포상", r.official && "공용"].filter(Boolean).join("·");
+  return [r.outing_round && `${r.outing_round}차`, r.reward && "포상", r.official && "공용"].filter(Boolean).join("·");
 }
+
+// 포상에 체크하면 어떤 포상인지 적는 칸을 보여준다
+$("reward").onchange = () => { $("rewardFields").hidden = !$("reward").checked; };
 
 document.querySelectorAll("input[name=type]").forEach((el) => el.onchange = () => {
   syncTypeFields();
@@ -512,8 +524,9 @@ $("form").onsubmit = async (e) => {
     body: JSON.stringify({
       type: currentType(),
       vacation_days: days,
-      reason: $("reason").value,
+      reason: currentType() === "휴가" ? $("reason").value : $("rewardReason").value,
       reward: $("reward").checked,
+      outing_round: +$("round").value,
       official: $("official").checked,
       rank: $("rank").value,
       name: $("name").value,
@@ -528,8 +541,10 @@ $("form").onsubmit = async (e) => {
   const done = `${data.rank} ${data.name} ${[data.type, detail(data)].filter(Boolean).join("·")} 신청 완료`;
   if (data.warnings.length) showMsg(`${done} · 출타율 초과: ${data.warnings.join(" / ")}`, "warn");
   else showMsg(done, "ok");
-  $("password").value = $("reason").value = "";
+  $("password").value = $("reason").value = $("rewardReason").value = "";
   $("reward").checked = $("official").checked = false;
+  $("round").value = "0";
+  $("rewardFields").hidden = true;
   document.querySelectorAll(".vday").forEach((el) => el.value = "");
   focusDate = selStart; selStart = selEnd = null;
   load();
