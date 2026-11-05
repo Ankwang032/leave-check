@@ -271,7 +271,7 @@
   </main>
 </div>
 
-<script>
+<script nonce="{{ csp_nonce }}">
 // 접속 코드가 바뀌어 접속이 끊기면 코드 입력 화면으로 보낸다 (신청 화면은 관리자 API를 쓰지 않는다)
 const rawFetch = window.fetch.bind(window);
 window.fetch = async (...args) => {

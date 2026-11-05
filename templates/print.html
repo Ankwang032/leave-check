@@ -30,8 +30,8 @@
 </head>
 <body>
 <div class="toolbar">
-  <button class="primary" onclick="window.print()">인쇄</button>
-  <button onclick="window.close()">닫기</button>
+  <button class="primary" id="printBtn">인쇄</button>
+  <button id="closeBtn">닫기</button>
 </div>
 
 <h1>출타 명단 ({{ title }})</h1>
@@ -73,7 +73,9 @@
   총 {{ items | length }}건{% if counts | length > 1 %} ({% for t, n in counts.items() %}{{ t }} {{ n }}{% if not loop.last %} · {% endif %}{% endfor %}){% endif %}
 </div>
 
-<script>
+<script nonce="{{ csp_nonce }}">
+  document.getElementById("printBtn").addEventListener("click", () => window.print());
+  document.getElementById("closeBtn").addEventListener("click", () => window.close());
   window.addEventListener("load", () => window.print());
 </script>
 </body>

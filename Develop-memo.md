@@ -30,6 +30,13 @@ ADMIN_PASSWORD='관리자비밀번호' python app.py   # http://localhost:5000
 
 ## 구현된 기능
 
+### 보안 점검 (2026-11-05)
+- 레드팀 스크립트로 서버를 직접 공격해 점검: 인증 우회, 권한 상승, 세션 위조, 열린 리다이렉트, SQLi, 저장형 XSS(실제 브라우저), 타입 혼동, 제어문자, 큰 요청, 무차별 대입, CSRF, 보안 헤더, 경로 탐색
+- 고친 것: 타입 혼동 500 오류, 무차별 대입 제한 없음, 보안 헤더·SameSite 없음, 제어문자 허용, 요청 크기 제한 없음, 로컬 실행 시 디버그 모드 기본 켜짐
+- 연속 오입력 기록은 `attempts` 테이블(키: `종류:IP`, `cancel-id:신청번호`). Vercel에서는 `x-real-ip`를 IP로 씀
+- CSP: 스크립트는 요청마다 만드는 nonce가 붙은 것만 실행. 템플릿에 `<script>`를 추가할 때 `nonce="{{ csp_nonce }}"`를 꼭 붙이고, `onclick=` 같은 속성 대신 addEventListener를 쓸 것
+- 남은 위험(설계상 수용): 접속 코드를 아는 사람은 모두 명단을 봄, 신청 취소 비밀번호 최소 4자(오입력 제한으로 보완), CSP style-src 'unsafe-inline'
+
 ### 관리자 비밀번호
 - 관리자 화면에서 변경(현재 비밀번호 확인, 새 비밀번호 8~64자). `settings` 테이블 `admin` 키에 `{hash, version, changed_at}` 저장
 - 행이 없으면 환경변수 `ADMIN_PASSWORD`(초기 비밀번호)로 확인. 잊으면 이 행을 지워 초기 비밀번호로 복구

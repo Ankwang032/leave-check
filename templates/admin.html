@@ -80,7 +80,7 @@
   <div class="msg err" id="loginMsg"></div>
   <a class="back" href="/">← 신청 화면으로</a>
 </form>
-<script>
+<script nonce="{{ csp_nonce }}">
 document.getElementById("loginForm").onsubmit = async (e) => {
   e.preventDefault();
   const res = await fetch("/api/admin/login", {
@@ -226,7 +226,7 @@ document.getElementById("loginForm").onsubmit = async (e) => {
   </div>
 </div>
 
-<script>
+<script nonce="{{ csp_nonce }}">
 const $ = (id) => document.getElementById(id);
 const pad = (n) => String(n).padStart(2, "0");
 const iso = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;

@@ -28,7 +28,7 @@
   <div class="msg err" id="msg"></div>
   <a class="back" href="/admin">관리자 로그인 →</a>
 </form>
-<script>
+<script nonce="{{ csp_nonce }}">
 const NEXT = {{ next_url | tojson }};
 document.getElementById("accessForm").onsubmit = async (e) => {
   e.preventDefault();

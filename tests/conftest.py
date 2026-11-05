@@ -28,7 +28,7 @@ def client(tmp_path, monkeypatch):
     app_module.init_db()
     if TEST_DATABASE_URL:
         db = app_module.Database()
-        db.execute("TRUNCATE requests, settings RESTART IDENTITY")
+        db.execute("TRUNCATE requests, settings, attempts RESTART IDENTITY")
         db.commit()
         db.close()
     with app_module.app.test_client() as c:

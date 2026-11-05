@@ -552,3 +552,147 @@ def test_header_day_tile_uses_korea_today(client):
 
 def test_admin_header_day_tile(admin):
     assert 'aria-label="오늘 11월 4일 수요일"' in admin.get("/admin").get_data(as_text=True)
+
+
+# ── 보안: 입력 타입·제어문자·크기 ───────────────────────
+
+@pytest.mark.parametrize("body", [
+    [1, 2], "문자열", make_request(name=123), make_request(rank={"a": 1}),
+    make_request(password=["a", "b", "c", "d"]), make_request(password=12345),
+    make_request(start_date=20261111), make_request(reward=True, reason=5),
+])
+def test_wrong_types_are_rejected_not_500(client, body):
+    assert post(client, body).status_code == 400
+
+
+@pytest.mark.parametrize("path, body", [
+    ("/api/access", {"code": 123456}),
+    ("/api/admin/login", {"password": ["x"]}),
+])
+def test_wrong_types_on_login_routes(client, path, body):
+    assert client.post(path, json=body).status_code in (204, 401)
+
+
+def test_wrong_type_cancel_password(client):
+    rid = post(client, make_request()).json["id"]
+    assert client.delete(f"/api/requests/{rid}", json={"password": 1234}).status_code == 403
+
+
+def test_window_settings_array_body(admin):
+    assert admin.put("/api/settings/window", json=["enabled"]).status_code == 200
+
+
+@pytest.mark.parametrize("name", ["가‮나", "가\u0000나", "가​나", "가\n나"])
+def test_control_chars_in_name_rejected(client, name):
+    assert post(client, make_request(name=name)).status_code == 400
+
+
+def test_reason_newlines_become_spaces(admin):
+    rid = post(admin, make_request(reward=True, reason="체력\n특급")).json["id"]
+    row = [r for r in admin.get("/api/requests").json if r["id"] == rid][0]
+    assert row["reason"] == "체력 특급"
+
+
+def test_reason_control_chars_rejected(client):
+    assert post(client, make_request(reward=True, reason="포상‮")).status_code == 400
+
+
+def test_large_body_rejected(client):
+    r = client.post("/api/requests", data="x" * (100 * 1024), content_type="application/json")
+    assert r.status_code == 413
+
+
+# ── 보안: 연속 오입력 제한 ───────────────────────────────
+
+def test_admin_login_lockout(client):
+    for _ in range(5):
+        assert client.post("/api/admin/login", json={"password": "wrong"}).status_code == 401
+    r = client.post("/api/admin/login", json={"password": "admin-test-pw"})
+    assert r.status_code == 429 and "분 뒤" in r.json["error"]
+
+
+def test_admin_login_success_resets_failures(client):
+    for _ in range(4):
+        client.post("/api/admin/login", json={"password": "wrong"})
+    assert client.post("/api/admin/login", json={"password": "admin-test-pw"}).status_code == 204
+    for _ in range(4):
+        assert client.post("/api/admin/login", json={"password": "wrong"}).status_code == 401
+
+
+def test_lockout_expires(client, monkeypatch):
+    for _ in range(5):
+        client.post("/api/admin/login", json={"password": "wrong"})
+    later = app_module.now() + app_module.timedelta(minutes=16)
+    monkeypatch.setattr(app_module, "now", lambda: later)
+    assert client.post("/api/admin/login", json={"password": "admin-test-pw"}).status_code == 204
+
+
+def test_access_code_lockout(client):
+    set_access(client)
+    for _ in range(10):
+        assert client.post("/api/access", json={"code": "wrong-code"}).status_code == 401
+    assert client.post("/api/access", json={"code": ACCESS_CODE}).status_code == 429
+
+
+def test_cancel_password_lockout(client):
+    rid = post(client, make_request(password="1234")).json["id"]
+    for i in range(10):
+        assert client.delete(f"/api/requests/{rid}", json={"password": f"{i:04d}x"}).status_code == 403
+    assert client.delete(f"/api/requests/{rid}", json={"password": "1234"}).status_code == 429
+
+
+def test_cancel_lockout_per_request_across_ips(client):
+    rid = post(client, make_request(password="1234")).json["id"]
+    for i in range(10):
+        env = {"REMOTE_ADDR": f"10.0.0.{i}"}
+        assert client.delete(f"/api/requests/{rid}", json={"password": "nope"}, environ_base=env).status_code == 403
+    r = client.delete(f"/api/requests/{rid}", json={"password": "1234"}, environ_base={"REMOTE_ADDR": "10.0.1.1"})
+    assert r.status_code == 429
+
+
+def test_change_password_counts_as_admin_failure(admin):
+    for _ in range(5):
+        assert change_pw(admin, "wrong", "new-admin-pw").status_code == 403
+    assert change_pw(admin, "admin-test-pw", "new-admin-pw").status_code == 429
+
+
+# ── 보안: CSRF·헤더·쿠키 ────────────────────────────────
+
+def test_cross_site_write_blocked(admin):
+    r = admin.put("/api/settings", json={"strength": 3}, headers={"Sec-Fetch-Site": "cross-site"})
+    assert r.status_code == 403
+    assert admin.put("/api/settings", json={"strength": 3}, headers={"Sec-Fetch-Site": "same-origin"}).status_code == 200
+
+
+def test_form_post_not_accepted_as_json(admin):
+    r = admin.put("/api/settings", data='{"strength": 3}', content_type="text/plain")
+    assert r.status_code == 400
+
+
+def test_security_headers(client):
+    r = client.get("/")
+    csp = r.headers["Content-Security-Policy"]
+    assert "frame-ancestors 'none'" in csp and "'nonce-" in csp and "unsafe-inline" not in csp.split("script-src")[1].split(";")[0]
+    assert r.headers["X-Frame-Options"] == "DENY"
+    assert r.headers["X-Content-Type-Options"] == "nosniff"
+    assert r.headers["Cache-Control"] == "no-store"
+
+
+def test_scripts_carry_nonce(admin):
+    for path in ["/", "/admin", "/admin/print?from=2026-11-01&to=2026-11-30"]:
+        r = admin.get(path)
+        nonce = r.headers["Content-Security-Policy"].split("'nonce-")[1].split("'")[0]
+        html = r.get_data(as_text=True)
+        assert html.count("<script") == html.count(f'<script nonce="{nonce}"')
+
+
+def test_session_cookie_samesite(client):
+    r = client.post("/api/admin/login", json={"password": "admin-test-pw"})
+    assert "SameSite=Lax" in r.headers["Set-Cookie"] and "HttpOnly" in r.headers["Set-Cookie"]
+
+
+def test_xss_name_escaped_in_print(admin):
+    post(admin, make_request(name="<b>x</b>", reward=True, reason="<script>alert(1)</script>"))
+    html = admin.get("/admin/print?from=2026-11-01&to=2026-11-30").get_data(as_text=True)
+    assert "<b>x</b>" not in html and "&lt;b&gt;x&lt;/b&gt;" in html
+    assert "<script>alert(1)" not in html
