@@ -36,6 +36,14 @@ a { color: inherit; }
 .brand .mark svg { width: 18px; height: 18px; }
 .brand h1 { margin: 0; font-size: 18px; letter-spacing: -.01em; }
 .brand small { display: block; color: var(--muted); font-size: 12px; font-weight: 400; margin-top: -2px; }
+/* 오늘 날짜 일력 (신청·관리자 화면 상단 바) */
+.daytile { width: 40px; height: 40px; flex: none; display: flex; flex-direction: column; overflow: hidden;
+           border: 1px solid var(--line); border-radius: 8px; background: var(--surface); text-align: center; line-height: 1; }
+.daytile .m { background: var(--accent); color: var(--accent-ink); font-size: 9px; font-weight: 600; letter-spacing: .04em; padding: 2px 0; }
+.daytile .d { flex-grow: 1; display: flex; flex-direction: column; justify-content: center; gap: 1px;
+              font-size: 16px; font-weight: 800; font-variant-numeric: tabular-nums; }
+.daytile .w { font-size: 8px; font-weight: 400; color: var(--muted); }
+.topbar .brand h1 { font-size: 22px; font-weight: 800; letter-spacing: -.02em; }
 .topbar nav { margin-left: auto; display: flex; gap: 4px; }
 .topbar nav a, .topbar nav button { color: var(--muted); text-decoration: none; background: none; border: 0;
   font: inherit; font-size: 14px; padding: 6px 10px; border-radius: 8px; cursor: pointer; }

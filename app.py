@@ -3,11 +3,12 @@ import json
 import os
 import secrets
 import sqlite3
+import time
 from datetime import date, datetime, timedelta, timezone
 from functools import wraps
 from pathlib import Path
 
-from flask import Flask, g, jsonify, redirect, render_template, request, session
+from flask import Flask, g, jsonify, redirect, render_template, request, session, url_for
 from werkzeug.security import check_password_hash, generate_password_hash
 
 BASE_DIR = Path(__file__).parent
@@ -55,6 +56,9 @@ def load_secret_key():
 app = Flask(__name__)
 app.secret_key = load_secret_key()
 app.config["SESSION_COOKIE_SECURE"] = ON_VERCEL
+# 접속 코드를 한 번 입력하면 30일 동안 다시 묻지 않는다 (관리자 로그인은 ADMIN_SESSION_SECONDS 뒤 만료)
+app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(days=30)
+ADMIN_SESSION_SECONDS = 12 * 60 * 60
 
 
 def today():
@@ -179,8 +183,36 @@ def init_db():
                            (json.dumps({r[1]: days}, ensure_ascii=False), r[0]))
 
 
+# ── 관리자 비밀번호 ─────────────────────────────────────
+# 관리자 화면에서 바꾼 비밀번호는 settings 테이블 'admin' 키에 해시로 저장한다.
+# 아직 바꾸지 않았으면 환경변수 ADMIN_PASSWORD(초기 비밀번호)를 쓴다.
+# 바꿀 때마다 version이 바뀌어, 다른 기기의 관리자 로그인은 모두 풀린다.
+
+def get_admin_setting():
+    if "admin_setting" not in g:
+        row = get_db().execute("SELECT value FROM settings WHERE key = 'admin'").fetchone()
+        g.admin_setting = json.loads(row["value"]) if row else None
+    return g.admin_setting
+
+
+def check_admin_password(password):
+    admin = get_admin_setting()
+    if admin:
+        return check_password_hash(admin["hash"], password)
+    return secrets.compare_digest(password.encode(), ADMIN_PASSWORD.encode())
+
+
+def admin_version():
+    admin = get_admin_setting()
+    return admin["version"] if admin else None
+
+
 def is_admin():
-    return session.get("admin") is True
+    # 세션에는 관리자 로그인 만료 시각(초)과 로그인할 때의 비밀번호 version을 저장한다
+    until = session.get("admin")
+    if not (isinstance(until, (int, float)) and not isinstance(until, bool) and until > time.time()):
+        return False
+    return session.get("admin_version") == admin_version()
 
 
 def admin_required(view):
@@ -190,6 +222,93 @@ def admin_required(view):
             return jsonify(error="관리자 로그인이 필요합니다."), 401
         return view(*args, **kwargs)
     return wrapper
+
+
+# ── 접속 코드 ───────────────────────────────────────────
+# 관리자가 접속 코드를 정하면, 코드를 입력한 사람(또는 관리자)만 신청 화면과 API를 쓸 수 있다.
+# 코드는 해시로 저장하고, 바꿀 때마다 version이 바뀌어 이전에 입력한 사람도 다시 입력해야 한다.
+
+def get_access():
+    row = get_db().execute("SELECT value FROM settings WHERE key = 'access'").fetchone()
+    return json.loads(row["value"]) if row else None
+
+
+def has_access():
+    access = get_access()
+    return access is None or is_admin() or session.get("access") == access["version"]
+
+
+# 접속 코드 없이 열 수 있는 화면: 코드 입력, 관리자 로그인, 정적 파일
+ACCESS_FREE = {"static", "access_page", "enter_access", "admin_page", "admin_login", "admin_logout", "robots"}
+
+
+@app.before_request
+def require_access_code():
+    if request.endpoint in ACCESS_FREE or has_access():
+        return None
+    if request.path.startswith("/api/"):
+        return jsonify(error="접속 코드를 입력하세요."), 401
+    return redirect(url_for("access_page", next=request.full_path.rstrip("?")))
+
+
+@app.after_request
+def no_index(response):
+    response.headers["X-Robots-Tag"] = "noindex, nofollow"  # 검색엔진에 노출하지 않는다
+    return response
+
+
+@app.get("/robots.txt")
+def robots():
+    return "User-agent: *\nDisallow: /\n", 200, {"Content-Type": "text/plain"}
+
+
+def safe_next(url):
+    """다른 사이트로 넘어가지 않도록 이 사이트 안의 경로만 허용한다."""
+    if (url and url.startswith("/") and not url.startswith("//") and "\\" not in url
+            and url.isprintable() and " " not in url):
+        return url
+    return "/"
+
+
+@app.get("/access")
+def access_page():
+    next_url = safe_next(request.args.get("next"))
+    if has_access():
+        return redirect(next_url)
+    return render_template("access.html", next_url=next_url)
+
+
+@app.post("/api/access")
+def enter_access():
+    access = get_access()
+    code = (request.get_json(silent=True) or {}).get("code") or ""
+    if access and not check_password_hash(access["hash"], code):
+        return jsonify(error="접속 코드가 틀렸습니다."), 401
+    if access:
+        session["access"] = access["version"]
+        session.permanent = True
+    return "", 204
+
+
+@app.put("/api/settings/access")
+@admin_required
+def update_access():
+    code = (request.get_json(silent=True) or {}).get("code")
+    if not isinstance(code, str):
+        return jsonify(error="접속 코드를 입력하세요."), 400
+    db = get_db()
+    if code == "":  # 빈 코드를 보내면 접속 코드를 해제한다
+        db.execute("DELETE FROM settings WHERE key = 'access'")
+        db.commit()
+        return jsonify(enabled=False)
+    if not 6 <= len(code) <= 30:
+        return jsonify(error="접속 코드를 6~30자로 입력하세요."), 400
+    access = {"hash": generate_password_hash(code), "version": secrets.token_hex(8),
+              "changed_at": now().isoformat(timespec="seconds")}
+    db.execute("INSERT INTO settings (key, value) VALUES ('access', ?) "
+               "ON CONFLICT (key) DO UPDATE SET value = excluded.value", (json.dumps(access),))
+    db.commit()
+    return jsonify(enabled=True, changed_at=access["changed_at"])
 
 
 def get_strength():
@@ -408,16 +527,27 @@ def capacity_warnings(req, exclude_id=None):
     return warnings
 
 
+def today_tile():
+    """상단 바 일력에 쓰는 오늘(한국 날짜)."""
+    t = today()
+    return {"month": t.month, "day": t.day, "dow": WEEKDAYS[t.weekday()]}
+
+
 @app.get("/")
 def index():
     return render_template("index.html", leave_types=LEAVE_TYPES, ranks=RANKS, vacation_kinds=VACATION_KINDS,
-                           outing_rounds=OUTING_ROUNDS)
+                           outing_rounds=OUTING_ROUNDS, today=today_tile())
 
 
 @app.get("/admin")
 def admin_page():
+    logged_in = is_admin()
+    access = get_access() if logged_in else None
+    admin = get_admin_setting() if logged_in else None
     return render_template("admin.html", leave_types=LEAVE_TYPES, ranks=RANKS,
-                           vacation_kinds=VACATION_KINDS, outing_rounds=OUTING_ROUNDS, logged_in=is_admin())
+                           vacation_kinds=VACATION_KINDS, outing_rounds=OUTING_ROUNDS, logged_in=logged_in,
+                           access_changed_at=access and access["changed_at"].replace("T", " "),
+                           admin_changed_at=admin and admin["changed_at"].replace("T", " "), today=today_tile())
 
 
 PRINT_KINDS = {"all": ("전체", LEAVE_TYPES), "vacation": ("휴가", ["휴가"]), "outing": ("외출/외박", ["외박", "외출"])}
@@ -605,15 +735,37 @@ def admin_delete_request(request_id):
 @app.post("/api/admin/login")
 def admin_login():
     password = (request.get_json(silent=True) or {}).get("password", "")
-    if not secrets.compare_digest(password, ADMIN_PASSWORD):
+    if not isinstance(password, str) or not check_admin_password(password):
         return jsonify(error="비밀번호가 틀렸습니다."), 401
-    session["admin"] = True
+    session["admin"] = time.time() + ADMIN_SESSION_SECONDS
+    session["admin_version"] = admin_version()
     return "", 204
+
+
+@app.put("/api/settings/admin-password")
+@admin_required
+def change_admin_password():
+    data = request.get_json(silent=True) or {}
+    current, new = data.get("current"), data.get("new")
+    if not isinstance(current, str) or not check_admin_password(current):
+        return jsonify(error="현재 비밀번호가 틀렸습니다."), 403
+    if not isinstance(new, str) or not 8 <= len(new) <= 64:
+        return jsonify(error="새 비밀번호를 8~64자로 입력하세요."), 400
+    admin = {"hash": generate_password_hash(new), "version": secrets.token_hex(8),
+             "changed_at": now().isoformat(timespec="seconds")}
+    db = get_db()
+    db.execute("INSERT INTO settings (key, value) VALUES ('admin', ?) "
+               "ON CONFLICT (key) DO UPDATE SET value = excluded.value", (json.dumps(admin),))
+    db.commit()
+    g.admin_setting = admin
+    session["admin_version"] = admin["version"]  # 바꾼 사람은 로그인을 유지한다
+    return jsonify(changed_at=admin["changed_at"])
 
 
 @app.post("/api/admin/logout")
 def admin_logout():
     session.pop("admin", None)
+    session.pop("admin_version", None)
     return "", 204
 
 

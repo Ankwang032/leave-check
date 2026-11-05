@@ -381,3 +381,174 @@ def test_old_sqlite_db_gets_outing_round_column(tmp_path, monkeypatch):
     app_module.init_db()
     with sqlite3.connect(path) as db:
         assert db.execute("SELECT outing_round FROM requests").fetchone() == (0,)
+
+
+# ── 접속 코드 ───────────────────────────────────────────
+
+ACCESS_CODE = "unit-2026"
+
+
+def set_access(client, code=ACCESS_CODE):
+    """관리자로 접속 코드를 정하고 로그아웃해 일반 방문자 상태로 돌아간다."""
+    client.post("/api/admin/login", json={"password": "admin-test-pw"})
+    assert client.put("/api/settings/access", json={"code": code}).status_code == 200
+    client.post("/api/admin/logout")
+
+
+def test_no_access_code_means_open(client):
+    assert client.get("/").status_code == 200
+    assert client.get("/api/requests").status_code == 200
+
+
+def test_access_code_blocks_pages_and_api(client):
+    post(client, make_request())
+    set_access(client)
+    r = client.get("/")
+    assert r.status_code == 302 and r.headers["Location"].startswith("/access")
+    assert client.get("/api/requests").status_code == 401
+    assert client.get("/api/settings").status_code == 401
+    assert post(client, make_request()).status_code == 401
+    assert client.delete("/api/requests/1", json={"password": "pass1234"}).status_code == 401
+
+
+def test_access_code_entry(client):
+    set_access(client)
+    assert client.post("/api/access", json={"code": "wrong-code"}).status_code == 401
+    assert client.get("/api/requests").status_code == 401
+    assert client.post("/api/access", json={"code": ACCESS_CODE}).status_code == 204
+    assert client.get("/").status_code == 200
+    assert client.get("/api/requests").status_code == 200
+
+
+def test_changing_access_code_logs_everyone_out(client):
+    set_access(client)
+    client.post("/api/access", json={"code": ACCESS_CODE})
+    set_access(client, "new-code-99")
+    assert client.get("/api/requests").status_code == 401
+    assert client.post("/api/access", json={"code": ACCESS_CODE}).status_code == 401
+    assert client.post("/api/access", json={"code": "new-code-99"}).status_code == 204
+
+
+def test_admin_bypasses_access_code_and_login_page_is_open(client):
+    set_access(client)
+    assert client.get("/admin").status_code == 200
+    assert client.post("/api/admin/login", json={"password": "admin-test-pw"}).status_code == 204
+    assert client.get("/").status_code == 200
+    assert client.get("/api/requests").status_code == 200
+
+
+def test_clear_access_code(client):
+    set_access(client)
+    client.post("/api/admin/login", json={"password": "admin-test-pw"})
+    assert client.put("/api/settings/access", json={}).status_code == 400  # 실수로 해제되지 않게 빈 코드만 허용
+    assert client.put("/api/settings/access", json={"code": ""}).json == {"enabled": False}
+    client.post("/api/admin/logout")
+    assert client.get("/api/requests").status_code == 200
+
+
+@pytest.mark.parametrize("code", ["short", "x" * 31, 123456])
+def test_invalid_access_code(admin, code):
+    assert admin.put("/api/settings/access", json={"code": code}).status_code == 400
+
+
+def test_access_code_requires_admin(client):
+    assert client.put("/api/settings/access", json={"code": ACCESS_CODE}).status_code == 401
+
+
+def test_access_code_stored_as_hash(client):
+    set_access(client)
+    db = app_module.Database()
+    value = db.execute("SELECT value FROM settings WHERE key = 'access'").fetchone()["value"]
+    db.close()
+    assert ACCESS_CODE not in value
+
+
+@pytest.mark.parametrize("next_url, expected", [
+    ("/admin", "/admin"),
+    ("//evil.example", "/"),
+    ("https://evil.example", "/"),
+    ("/\\evil.example", "/"),
+    ("/\t/evil.example", "/"),
+])
+def test_access_redirect_stays_on_site(client, next_url, expected):
+    # 코드가 없으면 접속 화면은 바로 next로 보낸다
+    r = client.get("/access", query_string={"next": next_url})
+    assert r.status_code == 302 and r.headers["Location"] == expected
+
+
+def test_admin_session_expires(client, monkeypatch):
+    client.post("/api/admin/login", json={"password": "admin-test-pw"})
+    later = app_module.time.time() + app_module.ADMIN_SESSION_SECONDS + 1
+    monkeypatch.setattr(app_module.time, "time", lambda: later)
+    assert client.put("/api/settings", json={"strength": 5}).status_code == 401
+
+
+def test_noindex(client):
+    assert client.get("/").headers["X-Robots-Tag"] == "noindex, nofollow"
+    assert "Disallow: /" in client.get("/robots.txt").get_data(as_text=True)
+
+
+def test_access_page_renders_when_code_set(client):
+    set_access(client)
+    r = client.get("/access?next=/admin")
+    assert r.status_code == 200 and "접속 코드" in r.get_data(as_text=True)
+
+
+# ── 관리자 비밀번호 변경 ────────────────────────────────
+
+def change_pw(client, current, new):
+    return client.put("/api/settings/admin-password", json={"current": current, "new": new})
+
+
+def test_change_admin_password(admin):
+    assert change_pw(admin, "admin-test-pw", "new-admin-pw").status_code == 200
+    assert admin.put("/api/settings", json={"strength": 5}).status_code == 200  # 바꾼 사람은 로그인 유지
+    admin.post("/api/admin/logout")
+    assert admin.post("/api/admin/login", json={"password": "admin-test-pw"}).status_code == 401
+    assert admin.post("/api/admin/login", json={"password": "new-admin-pw"}).status_code == 204
+
+
+def test_change_admin_password_logs_out_other_admins(client):
+    other = app_module.app.test_client()
+    for c in (client, other):
+        assert c.post("/api/admin/login", json={"password": "admin-test-pw"}).status_code == 204
+    change_pw(client, "admin-test-pw", "new-admin-pw")
+    assert other.put("/api/settings", json={"strength": 5}).status_code == 401
+    assert client.put("/api/settings", json={"strength": 5}).status_code == 200
+
+
+@pytest.mark.parametrize("current, new, status", [
+    ("wrong", "new-admin-pw", 403),
+    ("admin-test-pw", "short", 400),
+    ("admin-test-pw", "x" * 65, 400),
+    ("admin-test-pw", None, 400),
+])
+def test_change_admin_password_invalid(admin, current, new, status):
+    assert change_pw(admin, current, new).status_code == status
+    admin.post("/api/admin/logout")
+    assert admin.post("/api/admin/login", json={"password": "admin-test-pw"}).status_code == 204
+
+
+def test_change_admin_password_requires_login(client):
+    assert change_pw(client, "admin-test-pw", "new-admin-pw").status_code == 401
+
+
+def test_admin_password_stored_as_hash(admin):
+    change_pw(admin, "admin-test-pw", "new-admin-pw")
+    db = app_module.Database()
+    value = db.execute("SELECT value FROM settings WHERE key = 'admin'").fetchone()["value"]
+    db.close()
+    assert "new-admin-pw" not in value
+
+
+def test_admin_login_non_ascii_password(client):
+    assert client.post("/api/admin/login", json={"password": "비밀번호"}).status_code == 401
+
+
+def test_header_day_tile_uses_korea_today(client):
+    html = client.get("/").get_data(as_text=True)
+    assert 'aria-label="오늘 11월 4일 수요일"' in html
+
+
+def test_admin_header_day_tile(admin):
+    assert 'aria-label="오늘 11월 4일 수요일"' in admin.get("/admin").get_data(as_text=True)

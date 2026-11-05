@@ -3,6 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
 <title>출타 관리</title>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css">
 <link rel="stylesheet" href="{{ url_for('static', filename='base.css') }}">
@@ -22,6 +23,9 @@
   .strength input { width: 110px; }
   .strength .info { flex-basis: 100%; color: var(--muted); font-size: 13px; }
   .help-text { color: var(--muted); font-size: 12px; margin-top: 10px; }
+  .access input, .pw input { width: 200px; }
+  .access-state { font-size: 13px; margin-bottom: 10px; }
+  .access-state.off { color: var(--danger); font-weight: 600; }
 
   .win { display: flex; flex-direction: column; gap: 12px; font-size: 14px; }
   .win .line { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
@@ -91,8 +95,10 @@ document.getElementById("loginForm").onsubmit = async (e) => {
 <header class="topbar">
   <div class="in">
     <a class="brand" href="/admin">
-      <span class="mark"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4M9 15l2 2 4-4"/></svg></span>
-      <h1>출타 관리<small>관리자</small></h1>
+      <span class="daytile" role="img" aria-label="오늘 {{ today.month }}월 {{ today.day }}일 {{ today.dow }}요일">
+        <span class="m">{{ today.month }}월</span><span class="d">{{ today.day }}<span class="w">{{ today.dow }}</span></span>
+      </span>
+      <h1>출타 관리</h1>
     </a>
     <nav>
       <a href="/">신청 화면</a>
@@ -184,6 +190,40 @@ document.getElementById("loginForm").onsubmit = async (e) => {
       </table>
     </div>
   </section>
+
+  <div class="settings">
+    <section class="card">
+      <h2 class="card-title">접속 코드</h2>
+      <div class="access-state {{ '' if access_changed_at else 'off' }}" id="accessState">
+        {% if access_changed_at %}설정됨 · 마지막 변경 {{ access_changed_at }}
+        {% else %}설정되지 않음 · 지금은 누구나 신청 화면과 명단을 볼 수 있습니다{% endif %}
+      </div>
+      <form class="inline access" id="accessForm">
+        <input type="text" id="accessCode" minlength="6" maxlength="30" placeholder="새 접속 코드 (6~30자)" autocomplete="off">
+        <button class="btn primary">{{ '변경' if access_changed_at else '설정' }}</button>
+        {% if access_changed_at %}<button type="button" class="btn danger" id="accessOff">해제</button>{% endif %}
+      </form>
+      <div class="help-text">코드를 입력한 사람만 신청 화면을 볼 수 있습니다. 코드는 저장 후 다시 볼 수 없으니 따로 공지하세요.
+        코드를 바꾸면 이미 접속한 사람도 새 코드를 다시 입력해야 합니다.</div>
+      <div class="msg" id="accessMsg"></div>
+    </section>
+
+    <section class="card">
+      <h2 class="card-title">관리자 비밀번호</h2>
+      <div class="access-state {{ '' if admin_changed_at else 'off' }}">
+        {% if admin_changed_at %}마지막 변경 {{ admin_changed_at }}
+        {% else %}초기 비밀번호를 쓰고 있습니다 · 새 비밀번호로 바꾸세요{% endif %}
+      </div>
+      <form class="inline pw" id="pwForm">
+        <input type="password" id="pwCurrent" placeholder="현재 비밀번호" autocomplete="current-password" required>
+        <input type="password" id="pwNew" placeholder="새 비밀번호 (8자 이상)" autocomplete="new-password" minlength="8" maxlength="64" required>
+        <input type="password" id="pwConfirm" placeholder="새 비밀번호 확인" autocomplete="new-password" required>
+        <button class="btn primary">변경</button>
+      </form>
+      <div class="help-text">바꾸면 다른 기기에서 로그인한 관리자는 모두 로그아웃됩니다.</div>
+      <div class="msg" id="pwMsg"></div>
+    </section>
+  </div>
 </div>
 
 <script>
@@ -423,6 +463,39 @@ $("strengthForm").onsubmit = async (e) => {
   $("strengthMsg").className = "msg " + (res.ok ? "ok" : "err");
   $("strengthMsg").textContent = res.ok ? "저장되었습니다." : data.error;
   if (res.ok) load();
+};
+
+async function saveAccess(code) {
+  const res = await fetch("/api/settings/access", {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code }),
+  });
+  if (res.ok) { location.reload(); return; }
+  $("accessMsg").className = "msg err";
+  $("accessMsg").textContent = (await res.json()).error;
+}
+$("accessForm").onsubmit = (e) => {
+  e.preventDefault();
+  const code = $("accessCode").value.trim();
+  if (code.length < 6) { $("accessMsg").className = "msg err"; $("accessMsg").textContent = "접속 코드를 6~30자로 입력하세요."; return; }
+  saveAccess(code);
+};
+$("accessOff")?.addEventListener("click", (e) => {
+  const btn = e.currentTarget;
+  if (!btn.classList.contains("armed")) { btn.classList.add("armed"); btn.textContent = "해제 확인"; return; }   // 두 번 눌러야 해제
+  saveAccess("");
+});
+
+$("pwForm").onsubmit = async (e) => {
+  e.preventDefault();
+  const msg = (cls, text) => { $("pwMsg").className = "msg " + cls; $("pwMsg").textContent = text; };
+  if ($("pwNew").value !== $("pwConfirm").value) return msg("err", "새 비밀번호가 서로 다릅니다.");
+  const res = await fetch("/api/settings/admin-password", {
+    method: "PUT", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ current: $("pwCurrent").value, new: $("pwNew").value }),
+  });
+  if (!res.ok) return msg("err", (await res.json()).error);
+  e.target.reset();
+  msg("ok", "변경되었습니다. 다음 로그인부터 새 비밀번호를 쓰세요.");
 };
 
 // 출력 기간 기본값: 이번 달 1일 ~ 말일

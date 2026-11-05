@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>출타 신청</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css">
+<link rel="stylesheet" href="{{ url_for('static', filename='base.css') }}">
+<style>
+  .login { max-width: 380px; margin: 12vh auto 0; padding: 28px; }
+  .login .brand { margin-bottom: 12px; }
+  .login p { margin: 0 0 16px; color: var(--muted); font-size: 13px; line-height: 1.6; }
+  .login input { width: 100%; margin-bottom: 10px; }
+  .login .btn { width: 100%; padding: 10px; }
+  .login .back { display: block; margin-top: 16px; font-size: 13px; color: var(--muted); text-decoration: none; }
+</style>
+</head>
+<body>
+<form class="card login" id="accessForm">
+  <div class="brand">
+    <span class="mark"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg></span>
+    <h1>접속 코드<small>출타 신청</small></h1>
+  </div>
+  <p>부대에서 안내받은 접속 코드를 입력하세요. 한 번 입력하면 이 기기에서 30일 동안 다시 묻지 않습니다.</p>
+  <input type="password" id="code" placeholder="접속 코드" autocomplete="current-password" autofocus>
+  <button class="btn primary">입장</button>
+  <div class="msg err" id="msg"></div>
+  <a class="back" href="/admin">관리자 로그인 →</a>
+</form>
+<script>
+const NEXT = {{ next_url | tojson }};
+document.getElementById("accessForm").onsubmit = async (e) => {
+  e.preventDefault();
+  const res = await fetch("/api/access", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ code: document.getElementById("code").value }),
+  });
+  if (res.ok) location.href = NEXT;
+  else document.getElementById("msg").textContent = (await res.json()).error;
+};
+</script>
+</body>
+</html>
