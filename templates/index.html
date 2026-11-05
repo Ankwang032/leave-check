@@ -331,11 +331,17 @@ async function loadWeek() {
   if (!wide.matches) return;              // 휴대폰에서는 불러오지도 않는다
   const r = weekRange(), s = settings;
   const list = counted(await (await fetch(`/api/requests?from=${r.from}&to=${r.to}`)).json());
-  const days = [];
+  const counts = [];
   for (let ds = r.from; ds <= r.to; ds = addDays(ds, 1)) {
-    const n = list.filter((q) => q.start_date <= ds && ds <= q.end_date).length;
+    counts.push([ds, list.filter((q) => q.start_date <= ds && ds <= q.end_date).length]);
+  }
+  // 막대 높이 기준: 총원이 있으면 전체 출타 최대 인원, 없으면 이 주에서 가장 많은 날.
+  // 1명이라도 있으면 보이도록 최소 높이를 둔다 (최대 인원이 크면 1~2명은 1px도 안 되기 때문)
+  const scale = Math.max(1, s.strength ? s.total_max : Math.max(...counts.map(([, n]) => n)));
+  const days = [];
+  for (const [ds, n] of counts) {
     const full = s.strength && n >= s.total_max;
-    const fill = s.strength ? Math.min(100, Math.round(n / s.total_max * 100)) : 0;
+    const fill = n ? Math.min(100, Math.max(15, Math.round(n / scale * 100))) : 0;
     const dow = "일월화수목금토"[parse(ds).getDay()];
     days.push(`<button type="button" class="wb-day ${full ? "full" : ""}" data-ds="${ds}"
         aria-label="${fmt(ds)}(${dow}) 출타 ${n}명${s.strength ? `, 최대 ${s.total_max}명` : ""}">
@@ -343,7 +349,7 @@ async function loadWeek() {
       <span class="wb-txt"><span>${dow} ${fmt(ds)}</span><b>${s.strength ? `${n}/${s.total_max}` : `${n}명`}</b></span>
     </button>`);
   }
-  $("wbLabel").textContent = r.label + (s.strength ? ` · 날짜별 출타 인원 / 최대 ${s.total_max}명` : " · 날짜별 출타 인원");
+  $("wbLabel").textContent = r.label + (s.strength ? ` · 날짜별 출타 인원 / 최대 ${s.total_max}명` : " · 날짜별 출타 인원 (가장 많은 날 기준)");
   $("wbDays").innerHTML = days.join("");
   $("weekbar").hidden = false;
 }
