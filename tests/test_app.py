@@ -389,10 +389,12 @@ ACCESS_CODE = "unit-2026"
 
 
 def set_access(client, code=ACCESS_CODE):
-    """관리자로 접속 코드를 정하고 로그아웃해 일반 방문자 상태로 돌아간다."""
-    client.post("/api/admin/login", json={"password": "admin-test-pw"})
+    """관리자로 접속 코드를 정한 뒤, 세션을 비워 코드를 입력하지 않은 방문자 상태로 돌아간다."""
+    client.post("/api/access", json={"code": ACCESS_CODE})  # 이미 코드가 있으면 먼저 입력 (없으면 그냥 통과)
+    assert client.post("/api/admin/login", json={"password": "admin-test-pw"}).status_code == 204
     assert client.put("/api/settings/access", json={"code": code}).status_code == 200
-    client.post("/api/admin/logout")
+    with client.session_transaction() as s:
+        s.clear()
 
 
 def test_no_access_code_means_open(client):
@@ -429,16 +431,36 @@ def test_changing_access_code_logs_everyone_out(client):
     assert client.post("/api/access", json={"code": "new-code-99"}).status_code == 204
 
 
-def test_admin_bypasses_access_code_and_login_page_is_open(client):
+def test_admin_requires_access_code(client):
     set_access(client)
+    r = client.get("/admin")
+    assert r.status_code == 302 and r.headers["Location"] == "/access?next=/admin"
+    assert client.post("/api/admin/login", json={"password": "admin-test-pw"}).status_code == 401
+    client.post("/api/access", json={"code": ACCESS_CODE})
     assert client.get("/admin").status_code == 200
     assert client.post("/api/admin/login", json={"password": "admin-test-pw"}).status_code == 204
-    assert client.get("/").status_code == 200
-    assert client.get("/api/requests").status_code == 200
+
+
+def test_admin_session_does_not_bypass_changed_code(client):
+    other = app_module.app.test_client()
+    set_access(client)
+    for c in (client, other):
+        c.post("/api/access", json={"code": ACCESS_CODE})
+        assert c.post("/api/admin/login", json={"password": "admin-test-pw"}).status_code == 204
+    assert client.put("/api/settings/access", json={"code": "new-code-99"}).status_code == 200
+    assert client.put("/api/settings", json={"strength": 5}).status_code == 200   # 바꾼 사람은 유지
+    assert other.put("/api/settings", json={"strength": 5}).status_code == 401    # 다른 관리자는 새 코드 필요
+    assert other.get("/admin").status_code == 302
+
+
+def test_logout_works_without_access(client):
+    set_access(client)
+    assert client.post("/api/admin/logout").status_code == 204
 
 
 def test_clear_access_code(client):
     set_access(client)
+    client.post("/api/access", json={"code": ACCESS_CODE})
     client.post("/api/admin/login", json={"password": "admin-test-pw"})
     assert client.put("/api/settings/access", json={}).status_code == 400  # 실수로 해제되지 않게 빈 코드만 허용
     assert client.put("/api/settings/access", json={"code": ""}).json == {"enabled": False}

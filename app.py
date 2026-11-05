@@ -240,8 +240,9 @@ def get_access():
 
 
 def has_access():
+    """접속 코드가 없거나, 지금 코드를 입력한 세션인지. 관리자도 예외 없이 코드를 입력해야 한다."""
     access = get_access()
-    return access is None or is_admin() or session.get("access") == access["version"]
+    return access is None or session.get("access") == access["version"]
 
 
 # ── 입력·요청 공통 검사 ─────────────────────────────────
@@ -343,8 +344,9 @@ def inject_nonce():
     return {"csp_nonce": g.get("csp_nonce", "")}
 
 
-# 접속 코드 없이 열 수 있는 화면: 코드 입력, 관리자 로그인, 정적 파일
-ACCESS_FREE = {"static", "access_page", "enter_access", "admin_page", "admin_login", "admin_logout", "robots"}
+# 접속 코드 없이 열 수 있는 것: 코드 입력, 정적 파일, robots.txt, 로그아웃.
+# 관리자 화면과 관리자 로그인도 접속 코드를 먼저 입력해야 열린다.
+ACCESS_FREE = {"static", "access_page", "enter_access", "admin_logout", "robots"}
 
 
 @app.before_request
@@ -433,6 +435,8 @@ def update_access():
     db.execute("INSERT INTO settings (key, value) VALUES ('access', ?) "
                "ON CONFLICT (key) DO UPDATE SET value = excluded.value", (json.dumps(access),))
     db.commit()
+    session["access"] = access["version"]  # 바꾼 관리자는 새 코드로 접속을 유지한다
+    session.permanent = True
     return jsonify(enabled=True, changed_at=access["changed_at"])
 
 
