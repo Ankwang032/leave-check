@@ -1,0 +1,14 @@
+leave.db
+.secret_key
+__pycache__/
+*.pyc
+.venv/
+.agents/
+skills-lock.json
+tests/
+pytest.ini
+requirements-dev.txt
+Develop-memo.md
+.env*.local
+.vercel/
+.pytest_cache/

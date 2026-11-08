@@ -1,0 +1,667 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>출타 신청</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css">
+<link rel="stylesheet" href="{{ url_for('static', filename='base.css') }}">
+<style>
+  /* 상단 바: PC에서는 외출/외박 주간 띠 (일력은 base.css) */
+  .weekbar { display: none; flex: 0 1 600px; min-width: 0; flex-direction: column; gap: 4px; margin-left: 28px; }
+  @media (min-width: 1000px) { .weekbar { display: flex; } }   /* 휴대폰·좁은 화면에서는 숨긴다 */
+  .wb-label { font-size: 12px; color: var(--muted); }
+  .wb-days { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 5px; }
+  .wb-day { display: flex; align-items: center; gap: 6px; padding: 3px 6px; border: 1px solid var(--line); border-radius: 8px;
+            background: var(--surface); color: var(--ink); font: inherit; text-align: left; cursor: pointer; min-width: 0; }
+  .wb-day:hover { border-color: var(--accent); }
+  .wb-day:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .wb-bar { width: 5px; height: 24px; flex: none; border-radius: 3px; overflow: hidden; background: var(--surface-2);
+            box-shadow: inset 0 0 0 1px var(--line); display: flex; flex-direction: column; justify-content: flex-end; }
+  .wb-bar i { display: block; height: var(--fill); background: var(--accent); }
+  .wb-txt { display: flex; flex-direction: column; font-size: 11px; line-height: 1.25; white-space: nowrap; min-width: 0; }
+  .wb-txt span { color: var(--muted); }
+  .wb-txt b { font-variant-numeric: tabular-nums; }
+  .wb-day.full .wb-bar i { background: var(--danger); }
+  .wb-day.full b { color: var(--danger); }
+
+  /* 요약: 출타 상한 + 종합기간 */
+  .overview { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr); gap: 16px; margin-bottom: 16px; }
+  .stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+  .stat { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius);
+          padding: 14px 16px; box-shadow: var(--shadow); display: flex; flex-direction: column; justify-content: space-between; gap: 6px; }
+  .stat span { color: var(--muted); font-size: 12px; }
+  .stat b { font-size: 26px; line-height: 1.1; letter-spacing: -.02em; }
+  .stat b small { font-size: 13px; font-weight: 500; color: var(--muted); margin-left: 3px; letter-spacing: 0; }
+  .stat.wide { grid-column: 1 / -1; }
+  .stat.wide b { font-size: 16px; }
+  .window { display: flex; flex-direction: column; gap: 8px; font-size: 14px; }
+  .wrow { display: flex; gap: 12px; align-items: baseline; }
+  .wlabel { flex: none; width: 64px; font-size: 12px; font-weight: 600; color: var(--muted); }
+  .window .on { display: inline-block; font-size: 11px; font-weight: 600; color: var(--accent);
+                background: var(--accent-soft); border-radius: 99px; padding: 1px 8px; margin-right: 6px; }
+  .window .off { color: var(--muted); }
+
+  main { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 16px; align-items: start; }
+  @media (max-width: 900px) {
+    .overview, main { grid-template-columns: minmax(0, 1fr); }
+  }
+
+  /* 달력 */
+  .cal-head { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; }
+  .cal-head h2 { margin: 0 auto 0 0; font-size: 20px; letter-spacing: -.01em; }
+  .grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 6px; }
+  .dow { text-align: center; font-size: 12px; font-weight: 600; color: var(--muted); padding: 2px 0 4px; }
+  .dow:first-child, .day.sun .num { color: var(--sun); }
+  .dow:last-child, .day.sat .num { color: var(--sat); }
+  .day { min-height: 92px; border: 1px solid var(--line); border-radius: 10px; padding: 6px 7px;
+         cursor: pointer; background: var(--surface); user-select: none; transition: border-color .12s, background .12s; }
+  .day:hover { border-color: var(--accent); }
+  .day.empty { visibility: hidden; }
+  .day.past, .day.closed { background: var(--surface-2); }
+  .day.past > *, .day.closed > * { opacity: .45; }
+  .day.today .num { background: var(--accent); color: var(--accent-ink) !important; border-radius: 99px; padding: 0 7px; }
+  .day.full { background: var(--danger-soft); border-color: color-mix(in srgb, var(--danger) 35%, var(--line)); }
+  .day.sel { background: var(--accent-soft); border-color: var(--accent); }
+  .day.focus { box-shadow: 0 0 0 2px var(--accent); border-color: var(--accent); }
+  .num { display: inline-block; font-size: 13px; font-weight: 700; }
+  .counts { margin-top: 4px; display: flex; flex-direction: column; gap: 1px; font-size: 11px; }
+  .counts span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .counts span::before { content: ""; display: inline-block; width: 6px; height: 6px; border-radius: 50%;
+                         margin-right: 4px; vertical-align: 1px; background: var(--c); }
+  .counts .sum { color: var(--muted); }
+  .counts .sum::before { display: none; }
+  .counts .full { color: var(--danger); font-weight: 700; }
+  .legend { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-top: 14px; font-size: 12px; color: var(--muted); }
+  .legend span::before { content: ""; display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+                         margin-right: 6px; background: var(--c); }
+  .legend .box::before { border-radius: 2px; background: var(--c); border: 1px solid var(--b, transparent); }
+  @media (max-width: 560px) {
+    .card.cal { padding: 12px 10px; }
+    .grid { gap: 3px; }
+    .day { min-height: 64px; padding: 3px 4px; border-radius: 7px; }
+    .counts { font-size: 10px; }
+    .counts span::before { display: none; }
+    .stat { padding: 10px 12px; }
+    .stat b { font-size: 20px; }
+  }
+
+  /* 신청서 */
+  .step + .step { margin-top: 18px; padding-top: 16px; border-top: 1px dashed var(--line); }
+  .step-h { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 700; margin-bottom: 10px; }
+  /* 숫자 폭을 고정하고(tabular-nums) 글자 높이 기준으로 잘라(text-box) 원의 정중앙에 오게 한다 */
+  .step-h i { font-style: normal; width: 20px; height: 20px; border-radius: 50%; flex: none;
+              display: inline-flex; align-items: center; justify-content: center; line-height: 1;
+              font-size: 11px; font-variant-numeric: tabular-nums; text-box: trim-both cap alphabetic;
+              background: var(--accent); color: var(--accent-ink); }
+  .lbl { display: block; font-size: 12px; color: var(--muted); margin: 12px 0 5px; }
+  .types { display: flex; gap: 4px; padding: 4px; background: var(--surface-2); border: 1px solid var(--line); border-radius: 10px; }
+  .types input { position: absolute; opacity: 0; pointer-events: none; }
+  .types label { flex: 1; text-align: center; padding: 7px 0; border-radius: 7px; cursor: pointer;
+                 font-size: 14px; font-weight: 600; color: var(--muted); transition: background .12s, color .12s; }
+  .types label:hover { color: var(--ink); }
+  .types input:checked + label { background: var(--c); color: #fff; box-shadow: var(--shadow); }
+  .types input:focus-visible + label { outline: 2px solid var(--c); outline-offset: 2px; }
+  .vdays { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }
+  .vdays label { display: flex; flex-direction: column; align-items: center; gap: 3px; font-size: 12px; color: var(--muted); }
+  .vdays input { width: 100%; text-align: center; padding: 7px 4px; }
+  .vsum { font-size: 12px; margin-top: 6px; color: var(--muted); }
+  .vsum.ok { color: var(--accent); } .vsum.bad { color: var(--danger); }
+  textarea { width: 100%; resize: vertical; min-height: 60px; }
+  .checks { display: flex; gap: 8px; }
+  .checks label { flex: 1; display: flex; align-items: center; gap: 8px; padding: 9px 12px; cursor: pointer;
+                  border: 1px solid var(--line); border-radius: 8px; font-size: 14px; }
+  .checks label:has(input:checked) { border-color: var(--accent); background: var(--accent-soft); }
+  #form select, #form input[type=text], #form input[type=password] { width: 100%; }
+  .row { display: flex; gap: 8px; }
+  .row > div { flex: 1; min-width: 0; }
+  .row .lbl { margin-top: 0; }
+  .range { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-radius: 8px;
+           background: var(--surface-2); border: 1px solid var(--line); font-size: 15px; font-weight: 600; }
+  .range svg { width: 16px; height: 16px; color: var(--muted); flex: none; }
+  .hint { font-size: 12px; color: var(--muted); margin-top: 5px; }
+  .submit { width: 100%; margin-top: 18px; padding: 12px; font-size: 15px; font-weight: 700; }
+  .warn { margin-top: 14px; padding: 10px 12px; border-radius: 8px; background: var(--warn-soft); color: var(--warn);
+          font-size: 13px; }
+  .warn strong { display: block; margin-bottom: 2px; }
+
+  /* 명단 */
+  .side { display: flex; flex-direction: column; gap: 16px; }
+  .list ul { list-style: none; margin: 0; padding: 0; }
+  .list li { display: flex; align-items: center; gap: 8px; padding: 9px 0; border-top: 1px solid var(--line); font-size: 14px; }
+  .list li:first-child { border-top: 0; padding-top: 0; }
+  .tag { font-size: 11px; font-weight: 600; color: var(--c); background: color-mix(in srgb, var(--c) 14%, transparent);
+         border-radius: 6px; padding: 2px 7px; white-space: nowrap; }
+  .list .period { color: var(--muted); font-size: 12px; margin-left: auto; white-space: nowrap; }
+  .list .del { border: 0; background: none; color: var(--muted); cursor: pointer; font-size: 18px; line-height: 1;
+               width: 26px; height: 26px; border-radius: 6px; flex: none; }
+  .list .del:hover { background: var(--danger-soft); color: var(--danger); }
+  .list .empty { color: var(--muted); font-size: 13px; justify-content: center; padding: 18px 0; }
+  .list li.cancel { flex-wrap: wrap; }
+  .cancel-box { flex-basis: 100%; display: flex; gap: 6px; }
+  .cancel-box input { flex: 1; width: 0; padding: 6px 9px; font-size: 13px; }
+  .cancel-box button { border: 1px solid var(--line); background: var(--surface); color: var(--ink); border-radius: 8px;
+                       padding: 5px 10px; cursor: pointer; font: inherit; font-size: 13px; }
+  .cancel-box .go { background: var(--danger); border-color: var(--danger); color: #fff; }
+  .cancel-err { flex-basis: 100%; color: var(--danger); font-size: 12px; }
+</style>
+</head>
+<body>
+<header class="topbar">
+  <div class="in">
+    <a class="brand" href="/">
+      <span class="daytile" role="img" aria-label="오늘 {{ today.month }}월 {{ today.day }}일 {{ today.dow }}요일">
+        <span class="m">{{ today.month }}월</span><span class="d">{{ today.day }}<span class="w">{{ today.dow }}</span></span>
+      </span>
+      <h1>출타 신청</h1>
+    </a>
+    <div class="weekbar" id="weekbar" hidden>
+      <span class="wb-label" id="wbLabel"></span>
+      <div class="wb-days" id="wbDays"></div>
+    </div>
+    <nav><a href="/admin">관리자</a></nav>
+  </div>
+</header>
+
+<div class="page">
+  <section class="overview">
+    <div class="stats" id="limits"></div>
+    <div class="card">
+      <h2 class="card-title">종합기간 <span class="sub">접수 중인 기간만 신청할 수 있습니다</span></h2>
+      <div class="window" id="window"></div>
+    </div>
+  </section>
+
+  <main>
+    <section class="card cal">
+      <div class="cal-head">
+        <h2 id="title"></h2>
+        <button class="btn icon" id="prev" aria-label="이전 달">‹</button>
+        <button class="btn icon" id="next" aria-label="다음 달">›</button>
+      </div>
+      <div class="grid" id="grid"></div>
+      <div class="legend">
+        {% for t in leave_types %}<span style="--c: var(--{{ t }})">{{ t }}</span>{% endfor %}
+        <span class="box" style="--c: var(--danger-soft); --b: var(--danger)">출타율 초과</span>
+        <span class="box" style="--c: var(--surface-2); --b: var(--line)">접수 불가</span>
+      </div>
+    </section>
+
+    <div class="side">
+      <form class="card" id="form">
+        <h2 class="card-title">신청서</h2>
+
+        <div class="step">
+          <div class="step-h"><i>1</i>출타 종류</div>
+          <div class="types">
+            {% for t in leave_types %}
+            <input type="radio" name="type" id="t{{ loop.index }}" value="{{ t }}" {% if loop.first %}checked{% endif %}>
+            <label for="t{{ loop.index }}" style="--c: var(--{{ t }})">{{ t }}</label>
+            {% endfor %}
+          </div>
+
+          <div id="vacationFields">
+            <span class="lbl">휴가 종류별 일수</span>
+            <div class="vdays">
+              {% for k in vacation_kinds %}
+              <label>{{ k }}<input type="number" class="vday" data-kind="{{ k }}" min="0" max="100" placeholder="0"></label>
+              {% endfor %}
+            </div>
+            <div class="vsum" id="vsum"></div>
+            <label class="lbl" for="reason">세부사유 <span class="muted">(선택 · 관리자만 열람)</span></label>
+            <textarea id="reason" maxlength="100" placeholder="예: 분기 연가, ○○ 포상"></textarea>
+          </div>
+
+          <div id="outingFields" hidden>
+            <label class="lbl" for="round">차수</label>
+            <select id="round">
+              <option value="0">선택 안 함</option>
+              {% for n in outing_rounds %}<option value="{{ n }}">{{ n }}차</option>{% endfor %}
+            </select>
+            <span class="lbl">구분</span>
+            <div class="checks">
+              <label><input type="checkbox" id="reward"> 포상</label>
+              <label><input type="checkbox" id="official"> 공용</label>
+            </div>
+            <div id="detailFields" hidden>
+              <label class="lbl" for="outingDetail"><span id="detailLabel">포상 내용</span> <span class="muted">(관리자만 열람)</span></label>
+              <input type="text" id="outingDetail" maxlength="100">
+            </div>
+          </div>
+        </div>
+
+        <div class="step">
+          <div class="step-h"><i>2</i>날짜</div>
+          <div class="range"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg><span id="range">달력에서 날짜를 선택하세요</span></div>
+          <div class="hint" id="hint"></div>
+        </div>
+
+        <div class="step">
+          <div class="step-h"><i>3</i>신청자</div>
+          <div class="row">
+            <div>
+              <label class="lbl" for="rank">계급</label>
+              <select id="rank" required>
+                <option value="">선택</option>
+                {% for r in ranks %}<option>{{ r }}</option>{% endfor %}
+              </select>
+            </div>
+            <div>
+              <label class="lbl" for="name">이름</label>
+              <input type="text" id="name" maxlength="20" placeholder="홍길동" required>
+            </div>
+          </div>
+          <label class="lbl" for="password">비밀번호</label>
+          <input type="password" id="password" minlength="4" maxlength="30" placeholder="4자 이상" required>
+          <div class="hint">신청을 취소할 때 이 비밀번호로 본인을 확인합니다.</div>
+        </div>
+
+        <div class="warn" id="warn" hidden></div>
+
+        <button class="btn primary submit" id="submit">신청하기</button>
+        <div class="msg" id="msg"></div>
+      </form>
+
+      <section class="card list">
+        <h2 class="card-title" id="listTitle">출타자 명단</h2>
+        <ul id="list"></ul>
+      </section>
+    </div>
+  </main>
+</div>
+
+<script nonce="{{ csp_nonce }}">
+// 접속 코드가 바뀌어 접속이 끊기면 코드 입력 화면으로 보낸다 (신청 화면은 관리자 API를 쓰지 않는다)
+const rawFetch = window.fetch.bind(window);
+window.fetch = async (...args) => {
+  const res = await rawFetch(...args);
+  if (res.status === 401) location.href = "/access?next=" + encodeURIComponent(location.pathname);
+  return res;
+};
+const $ = (id) => document.getElementById(id);
+const pad = (n) => String(n).padStart(2, "0");
+const iso = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+const todayIso = iso(new Date());
+const fmt = (s) => { const [, m, d] = s.split("-"); return `${+m}/${+d}`; };
+const parse = (s) => { const [y, m, d] = s.split("-"); return new Date(y, m - 1, d); };
+
+let view = new Date(); view.setDate(1);
+let requests = [];
+let settings = { strength: 0 };
+let selStart = null, selEnd = null;   // 신청할 기간
+let focusDate = todayIso;             // 명단을 볼 날짜
+let cancelId = null;                  // 비밀번호 확인 중인 신청
+
+const currentType = () => document.querySelector("input[name=type]:checked").value;
+
+async function load() {
+  const y = view.getFullYear(), m = view.getMonth();
+  const from = iso(new Date(y, m, 1)), to = iso(new Date(y, m + 1, 0));
+  const [reqRes, setRes] = await Promise.all([
+    fetch(`/api/requests?from=${from}&to=${to}`),
+    fetch("/api/settings"),
+  ]);
+  requests = await reqRes.json();
+  settings = await setRes.json();
+  renderLimits();
+  renderWindow();
+  render();
+  loadWeek();
+}
+
+// ── 상단 주간 띠 (PC 전용) ─────────────────────────────
+// 지금 접수 중인 외출/외박 주(겹치면 다가오는 주)의 날짜별 출타 인원. 종합기간이 꺼져 있으면 오늘부터 7일.
+const wide = matchMedia("(min-width: 1000px)");
+const addDays = (ds, n) => { const d = parse(ds); d.setDate(d.getDate() + n); return iso(d); };
+
+function weekRange() {
+  const w = settings.window, st = settings.status;
+  if (!w.enabled) return { from: todayIso, to: addDays(todayIso, 6), label: "앞으로 7일" };
+  const open = st.outing_open;
+  if (open.length) {
+    const r = open[open.length - 1];
+    return { from: r.from, to: r.to, label: `외출·외박 접수 중 · ${fmt(r.close)} 마감` };
+  }
+  const n = st.next_outing;
+  return { from: n.from, to: n.to, label: `다음 외출·외박 접수 ${fmt(n.open)}부터` };
+}
+
+async function loadWeek() {
+  if (!wide.matches) return;              // 휴대폰에서는 불러오지도 않는다
+  const r = weekRange(), s = settings;
+  const list = counted(await (await fetch(`/api/requests?from=${r.from}&to=${r.to}`)).json());
+  const counts = [];
+  for (let ds = r.from; ds <= r.to; ds = addDays(ds, 1)) {
+    counts.push([ds, list.filter((q) => q.start_date <= ds && ds <= q.end_date).length]);
+  }
+  // 막대 높이 기준: 총원이 있으면 전체 출타 최대 인원, 없으면 이 주에서 가장 많은 날.
+  // 1명이라도 있으면 보이도록 최소 높이를 둔다 (최대 인원이 크면 1~2명은 1px도 안 되기 때문)
+  const scale = Math.max(1, s.strength ? s.total_max : Math.max(...counts.map(([, n]) => n)));
+  const days = [];
+  for (const [ds, n] of counts) {
+    const full = s.strength && n >= s.total_max;
+    const fill = n ? Math.min(100, Math.max(15, Math.round(n / scale * 100))) : 0;
+    const dow = "일월화수목금토"[parse(ds).getDay()];
+    days.push(`<button type="button" class="wb-day ${full ? "full" : ""}" data-ds="${ds}"
+        aria-label="${fmt(ds)}(${dow}) 출타 ${n}명${s.strength ? `, 최대 ${s.total_max}명` : ""}">
+      <span class="wb-bar" aria-hidden="true"><i style="--fill: ${fill}%"></i></span>
+      <span class="wb-txt"><span>${dow} ${fmt(ds)}</span><b>${s.strength ? `${n}/${s.total_max}` : `${n}명`}</b></span>
+    </button>`);
+  }
+  $("wbLabel").textContent = r.label + (s.strength ? ` · 날짜별 출타 인원 / 최대 ${s.total_max}명` : " · 날짜별 출타 인원 (가장 많은 날 기준)");
+  $("wbDays").innerHTML = days.join("");
+  $("weekbar").hidden = false;
+}
+
+// 띠의 날짜를 누르면 달력에서 그날을 고른 것과 같다 (다른 달이면 그 달로 이동)
+$("wbDays").onclick = async (e) => {
+  const btn = e.target.closest(".wb-day");
+  if (!btn) return;
+  const d = parse(btn.dataset.ds);
+  if (d.getFullYear() !== view.getFullYear() || d.getMonth() !== view.getMonth()) {
+    view = new Date(d.getFullYear(), d.getMonth(), 1);
+    await load();
+  }
+  pick(btn.dataset.ds);
+};
+wide.addEventListener("change", loadWeek);
+
+function renderLimits() {
+  const s = settings;
+  $("limits").innerHTML = s.strength
+    ? `<div class="stat"><span>부대 총원</span><b>${s.strength}<small>명</small></b></div>
+       <div class="stat"><span>휴가 최대</span><b>${s.vacation_max}<small>명 · ${s.vacation_limit}%</small></b></div>
+       <div class="stat"><span>전체 출타 최대</span><b>${s.total_max}<small>명 · ${s.total_limit}%</small></b></div>`
+    : `<div class="stat wide"><span>출타율</span><b>총원이 아직 설정되지 않아 제한이 적용되지 않습니다.</b></div>`;
+}
+
+function onDate(dateIso) {
+  return requests.filter((r) => r.start_date <= dateIso && dateIso <= r.end_date);
+}
+
+// 출타율 계산에 들어가는 신청 (공용 외출/외박 제외)
+const counted = (list) => list.filter((r) => !r.official);
+
+function render() {
+  const y = view.getFullYear(), m = view.getMonth();
+  $("title").textContent = `${y}년 ${m + 1}월`;
+  const grid = $("grid");
+  grid.innerHTML = "일월화수목금토".split("").map((d) => `<div class="dow">${d}</div>`).join("");
+
+  const first = new Date(y, m, 1).getDay();
+  const days = new Date(y, m + 1, 0).getDate();
+  for (let i = 0; i < first; i++) grid.insertAdjacentHTML("beforeend", `<div class="day empty"></div>`);
+
+  for (let d = 1; d <= days; d++) {
+    const date = new Date(y, m, d), ds = iso(date);
+    const cls = ["day"];
+    if (date.getDay() === 0) cls.push("sun");
+    if (date.getDay() === 6) cls.push("sat");
+    if (ds < todayIso) cls.push("past");
+    else if (!isOpen(ds)) cls.push("closed");
+    if (ds === todayIso) cls.push("today");
+    if (selStart && ds >= selStart && ds <= (selEnd || selStart)) cls.push("sel");
+    if (ds === focusDate) cls.push("focus");
+
+    const all = onDate(ds), list = counted(all), official = all.length - list.length;
+    const counts = {};
+    list.forEach((r) => counts[r.type] = (counts[r.type] || 0) + 1);
+    const s = settings;
+    const vacFull = s.strength && (counts["휴가"] || 0) >= s.vacation_max;
+    const allFull = s.strength && list.length >= s.total_max;
+    if (allFull) cls.push("full");
+
+    let countHtml = Object.entries(counts).map(([t, n]) => {
+      const max = t === "휴가" && s.strength ? `/${s.vacation_max}` : "";
+      const full = t === "휴가" && vacFull ? "full" : "";
+      return `<span class="${full}" style="--c: var(--${t})">${t} ${n}${max}</span>`;
+    }).join("");
+    if (s.strength && list.length) {
+      countHtml += `<span class="sum ${allFull ? "full" : ""}">계 ${list.length}/${s.total_max}</span>`;
+    }
+    if (official) countHtml += `<span class="sum">공용 ${official}</span>`;
+
+    const el = document.createElement("div");
+    el.className = cls.join(" ");
+    el.innerHTML = `<div class="num">${d}</div><div class="counts">${countHtml}</div>`;
+    el.onclick = () => pick(ds);
+    grid.appendChild(el);
+  }
+  renderRange();
+  renderList();
+}
+
+// 시작일이 오늘 접수 중인 종합기간에 들어가는지 (종료일은 제한 없음)
+function isOpen(ds, type = currentType()) {
+  if (ds < todayIso) return false;
+  if (!settings.window?.enabled) return true;
+  const ranges = type === "휴가" ? settings.status.vacation_open : settings.status.outing_open;
+  return ranges.some((r) => r.from <= ds && ds <= r.to);
+}
+
+function pick(ds) {
+  focusDate = ds;
+  if (currentType() !== "외출" && selStart && !selEnd && ds >= selStart) {
+    selEnd = ds;                             // 기간 끝 지정
+  } else if (isOpen(ds)) {
+    selStart = ds; selEnd = null;            // 새 기간 시작
+  }
+  render();
+}
+
+function renderWindow() {
+  const w = settings.window, st = settings.status;
+  if (!w.enabled) { $("window").innerHTML = `<div class="off">종합기간 제한 없이 신청할 수 있습니다.</div>`; return; }
+  const day = (s) => `${fmt(s)}(${"일월화수목금토"[parse(s).getDay()]})`;
+  const outing = st.outing_open.length
+    ? st.outing_open.map((r) => `<span class="on">접수 중</span>${day(r.from)}~${day(r.to)} 출타분 · ${day(r.close)} 마감`).join("<br>")
+    : `<span class="off">종합 기간 아님 · 다음 종합 ${day(st.next_outing.open)}~${day(st.next_outing.close)}</span>`;
+  const vacation = st.vacation_open.length
+    ? st.vacation_open.map((r) => `<span class="on">접수 중</span>${+r.from.slice(5, 7)}월분 · ${day(r.close)} 마감`).join("<br>")
+    : `<span class="off">종합 기간 아님 · 다음 종합 ${day(st.next_vacation.open)}~${day(st.next_vacation.close)}
+       (${+st.next_vacation.from.slice(5, 7)}월분)</span>`;
+  const row = (label, html) => `<div class="wrow"><span class="wlabel">${label}</span><span>${html}</span></div>`;
+  $("window").innerHTML = row("외출/외박", outing) + row("휴가", vacation);
+}
+
+function renderRange() {
+  const type = currentType();
+  if (!selStart) {
+    $("range").textContent = "달력에서 날짜를 선택하세요";
+  } else if (!selEnd || selEnd === selStart) {
+    $("range").textContent = fmt(selStart);
+  } else {
+    const nights = (new Date(selEnd) - new Date(selStart)) / 86400000;
+    $("range").textContent = `${fmt(selStart)} ~ ${fmt(selEnd)} (${nights}박 ${nights + 1}일)`;
+  }
+  $("hint").textContent = type === "외출"
+    ? "외출은 하루만 선택합니다."
+    : "시작일을 누른 뒤 종료일을 누르세요.";
+
+  const warnings = overWarnings();
+  $("warn").hidden = !warnings.length;
+  $("warn").innerHTML = `<strong>출타율 초과 안내</strong>${warnings.join("<br>")}<br>초과되어도 신청은 가능합니다.`;
+  $("submit").textContent = warnings.length ? "초과를 확인하고 신청하기" : "신청하기";
+  renderVacationSum();
+}
+
+const selectedDays = () => selStart ? (parse(selEnd || selStart) - parse(selStart)) / 86400000 + 1 : 0;
+
+function vacationDays() {
+  const out = {};
+  document.querySelectorAll(".vday").forEach((el) => { if (+el.value) out[el.dataset.kind] = +el.value; });
+  return out;
+}
+
+// 종류별 일수 합계가 선택한 기간과 맞는지 보여준다
+function renderVacationSum() {
+  const sum = Object.values(vacationDays()).reduce((a, b) => a + b, 0), total = selectedDays();
+  $("vsum").className = "vsum " + (!total ? "" : sum === total ? "ok" : "bad");
+  $("vsum").textContent = !total ? "날짜를 먼저 선택하세요."
+    : sum === total ? `합계 ${sum}일 · 신청 기간 ${total}일과 일치`
+    : `합계 ${sum}일 / 신청 기간 ${total}일 (${total - sum > 0 ? `${total - sum}일 더 입력` : `${sum - total}일 초과`})`;
+}
+
+document.querySelectorAll(".vday").forEach((el) => el.oninput = renderVacationSum);
+$("official").onchange = () => { syncDetailFields(); renderRange(); };
+
+// 선택한 기간에 신청하면 출타율 상한을 넘는 날짜 (화면에 불러온 달 기준)
+function overWarnings() {
+  const s = settings;
+  const type = currentType();
+  if (!s.strength || !selStart || (type !== "휴가" && $("official").checked)) return [];
+  const vacOver = [], allOver = [];
+  for (let d = parse(selStart); iso(d) <= (selEnd || selStart); d.setDate(d.getDate() + 1)) {
+    const ds = iso(d), list = counted(onDate(ds));
+    const vac = list.filter((r) => r.type === "휴가").length + (type === "휴가");
+    if (type === "휴가" && vac > s.vacation_max) vacOver.push(fmt(ds));
+    if (list.length + 1 > s.total_max) allOver.push(fmt(ds));
+  }
+  const out = [];
+  if (vacOver.length) out.push(`${vacOver.join(", ")} 휴가 출타율 초과 (최대 ${s.vacation_max}명, ${s.vacation_limit}%)`);
+  if (allOver.length) out.push(`${allOver.join(", ")} 전체 출타율 초과 (최대 ${s.total_max}명, ${s.total_limit}%)`);
+  return out;
+}
+
+function renderList() {
+  const list = onDate(focusDate);
+  $("listTitle").textContent = `${fmt(focusDate)} 출타자 명단 (${list.length}명)`;
+  $("list").innerHTML = list.length
+    ? list.map((r) => `
+        <li class="${r.id === cancelId ? "cancel" : ""}">
+          <span class="tag" style="--c: var(--${r.type})">${[r.type, detail(r)].filter(Boolean).join("·")}</span>
+          <span>${esc(r.rank)} ${esc(r.name)}</span>
+          <span class="period">${r.start_date === r.end_date ? fmt(r.start_date) : `${fmt(r.start_date)}~${fmt(r.end_date)}`}</span>
+          <button class="del" data-id="${r.id}" title="신청 취소">×</button>
+          ${r.id === cancelId ? `
+            <div class="cancel-box">
+              <input type="password" id="cancelPw" placeholder="신청 비밀번호" maxlength="30">
+              <button class="go" data-id="${r.id}">취소하기</button>
+              <button class="back">닫기</button>
+            </div>
+            <div class="cancel-err" id="cancelErr"></div>` : ""}
+        </li>`).join("")
+    : `<li class="empty">출타 인원이 없습니다.</li>`;
+  if (cancelId) $("cancelPw")?.focus();
+}
+
+function esc(s) {
+  return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+function showMsg(text, kind = "err") {
+  $("msg").textContent = text;
+  $("msg").className = "msg " + kind;
+}
+
+async function cancelRequest(id) {
+  const res = await fetch(`/api/requests/${id}`, {
+    method: "DELETE",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ password: $("cancelPw").value }),
+  });
+  if (!res.ok) {
+    $("cancelErr").textContent = (await res.json()).error;
+    return;
+  }
+  cancelId = null;
+  load();
+}
+
+$("list").onclick = (e) => {
+  const del = e.target.closest(".del");
+  if (del) { cancelId = +del.dataset.id === cancelId ? null : +del.dataset.id; renderList(); return; }
+  if (e.target.closest(".back")) { cancelId = null; renderList(); return; }
+  const go = e.target.closest(".go");
+  if (go) cancelRequest(go.dataset.id);
+};
+
+$("list").onkeydown = (e) => {
+  if (e.key === "Enter" && e.target.id === "cancelPw") cancelRequest(cancelId);
+};
+
+// 휴가는 휴가 종류·세부사유, 외출/외박은 포상·공용 체크란을 보여준다
+function syncTypeFields() {
+  const vacation = currentType() === "휴가";
+  $("vacationFields").hidden = !vacation;
+  $("outingFields").hidden = vacation;
+}
+
+function detail(r) {
+  if (r.type === "휴가") return Object.entries(r.vacation_days || {}).map(([k, n]) => `${k} ${n}`).join("·");
+  return [r.outing_round && `${r.outing_round}차`, r.reward && "포상", r.official && "공용"].filter(Boolean).join("·");
+}
+
+// 포상이나 공용에 체크하면 세부사항을 적는 칸을 보여준다 (칸 이름은 서버 outing_detail_label과 같음)
+const DETAIL_PLACEHOLDER = {
+  "포상 내용": "예: 체력검정 특급 포상, 분대장 포상",
+  "공용 세부사항": "예: 국군병원 외진, ○○ 교육 참석",
+  "포상·공용 세부사항": "예: 분대장 포상 / 국군병원 외진",
+};
+function detailLabel() {
+  if (!$("official").checked) return "포상 내용";
+  return $("reward").checked ? "포상·공용 세부사항" : "공용 세부사항";
+}
+function syncDetailFields() {
+  $("detailFields").hidden = !$("reward").checked && !$("official").checked;
+  $("detailLabel").textContent = detailLabel();
+  $("outingDetail").placeholder = DETAIL_PLACEHOLDER[detailLabel()];
+}
+$("reward").onchange = syncDetailFields;
+
+document.querySelectorAll("input[name=type]").forEach((el) => el.onchange = () => {
+  syncTypeFields();
+  if (currentType() === "외출") selEnd = null;
+  if (selStart && !isOpen(selStart)) selStart = selEnd = null;   // 바꾼 종류의 종합기간이 아니면 선택 해제
+  render();
+});
+
+$("form").onsubmit = async (e) => {
+  e.preventDefault();
+  if (!selStart) return showMsg("날짜를 선택하세요.");
+  const days = vacationDays();
+  if (currentType() === "휴가" && Object.values(days).reduce((a, b) => a + b, 0) !== selectedDays()) {
+    return showMsg("휴가 종류별 일수 합계를 신청 기간과 맞춰주세요.");
+  }
+  $("submit").disabled = true;
+  const res = await fetch("/api/requests", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      type: currentType(),
+      vacation_days: days,
+      reason: currentType() === "휴가" ? $("reason").value : $("outingDetail").value,
+      reward: $("reward").checked,
+      outing_round: +$("round").value,
+      official: $("official").checked,
+      rank: $("rank").value,
+      name: $("name").value,
+      password: $("password").value,
+      start_date: selStart,
+      end_date: selEnd || selStart,
+    }),
+  });
+  $("submit").disabled = false;
+  const data = await res.json();
+  if (!res.ok) return showMsg(data.error);
+  const done = `${data.rank} ${data.name} ${[data.type, detail(data)].filter(Boolean).join("·")} 신청 완료`;
+  if (data.warnings.length) showMsg(`${done} · 출타율 초과: ${data.warnings.join(" / ")}`, "warn");
+  else showMsg(done, "ok");
+  $("password").value = $("reason").value = $("outingDetail").value = "";
+  $("reward").checked = $("official").checked = false;
+  $("round").value = "0";
+  syncDetailFields();
+  document.querySelectorAll(".vday").forEach((el) => el.value = "");
+  focusDate = selStart; selStart = selEnd = null;
+  load();
+};
+
+$("prev").onclick = () => { view.setMonth(view.getMonth() - 1); load(); };
+$("next").onclick = () => { view.setMonth(view.getMonth() + 1); load(); };
+
+syncTypeFields();
+load();
+</script>
+</body>
+</html>
