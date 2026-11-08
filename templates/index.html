@@ -224,9 +224,9 @@
               <label><input type="checkbox" id="reward"> 포상</label>
               <label><input type="checkbox" id="official"> 공용</label>
             </div>
-            <div id="rewardFields" hidden>
-              <label class="lbl" for="rewardReason">포상 내용 <span class="muted">(관리자만 열람)</span></label>
-              <input type="text" id="rewardReason" maxlength="100" placeholder="예: 체력검정 특급 포상, 분대장 포상">
+            <div id="detailFields" hidden>
+              <label class="lbl" for="outingDetail"><span id="detailLabel">포상 내용</span> <span class="muted">(관리자만 열람)</span></label>
+              <input type="text" id="outingDetail" maxlength="100">
             </div>
           </div>
         </div>
@@ -504,7 +504,7 @@ function renderVacationSum() {
 }
 
 document.querySelectorAll(".vday").forEach((el) => el.oninput = renderVacationSum);
-$("official").onchange = renderRange;
+$("official").onchange = () => { syncDetailFields(); renderRange(); };
 
 // 선택한 기간에 신청하면 출타율 상한을 넘는 날짜 (화면에 불러온 달 기준)
 function overWarnings() {
@@ -593,8 +593,22 @@ function detail(r) {
   return [r.outing_round && `${r.outing_round}차`, r.reward && "포상", r.official && "공용"].filter(Boolean).join("·");
 }
 
-// 포상에 체크하면 어떤 포상인지 적는 칸을 보여준다
-$("reward").onchange = () => { $("rewardFields").hidden = !$("reward").checked; };
+// 포상이나 공용에 체크하면 세부사항을 적는 칸을 보여준다 (칸 이름은 서버 outing_detail_label과 같음)
+const DETAIL_PLACEHOLDER = {
+  "포상 내용": "예: 체력검정 특급 포상, 분대장 포상",
+  "공용 세부사항": "예: 국군병원 외진, ○○ 교육 참석",
+  "포상·공용 세부사항": "예: 분대장 포상 / 국군병원 외진",
+};
+function detailLabel() {
+  if (!$("official").checked) return "포상 내용";
+  return $("reward").checked ? "포상·공용 세부사항" : "공용 세부사항";
+}
+function syncDetailFields() {
+  $("detailFields").hidden = !$("reward").checked && !$("official").checked;
+  $("detailLabel").textContent = detailLabel();
+  $("outingDetail").placeholder = DETAIL_PLACEHOLDER[detailLabel()];
+}
+$("reward").onchange = syncDetailFields;
 
 document.querySelectorAll("input[name=type]").forEach((el) => el.onchange = () => {
   syncTypeFields();
@@ -617,7 +631,7 @@ $("form").onsubmit = async (e) => {
     body: JSON.stringify({
       type: currentType(),
       vacation_days: days,
-      reason: currentType() === "휴가" ? $("reason").value : $("rewardReason").value,
+      reason: currentType() === "휴가" ? $("reason").value : $("outingDetail").value,
       reward: $("reward").checked,
       outing_round: +$("round").value,
       official: $("official").checked,
@@ -634,10 +648,10 @@ $("form").onsubmit = async (e) => {
   const done = `${data.rank} ${data.name} ${[data.type, detail(data)].filter(Boolean).join("·")} 신청 완료`;
   if (data.warnings.length) showMsg(`${done} · 출타율 초과: ${data.warnings.join(" / ")}`, "warn");
   else showMsg(done, "ok");
-  $("password").value = $("reason").value = $("rewardReason").value = "";
+  $("password").value = $("reason").value = $("outingDetail").value = "";
   $("reward").checked = $("official").checked = false;
   $("round").value = "0";
-  $("rewardFields").hidden = true;
+  syncDetailFields();
   document.querySelectorAll(".vday").forEach((el) => el.value = "");
   focusDate = selStart; selStart = selEnd = null;
   load();

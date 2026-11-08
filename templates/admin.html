@@ -177,7 +177,7 @@ document.getElementById("loginForm").onsubmit = async (e) => {
           <tr id="heads">
             <th class="sort" data-key="type">종류</th>
             <th class="sort" data-key="detail">구분</th>
-            <th>세부사유·포상 내용</th>
+            <th>세부사유·세부사항</th>
             <th class="sort" data-key="rank">계급</th>
             <th class="sort" data-key="name">이름</th>
             <th class="sort" data-key="start_date">시작일</th>
@@ -347,7 +347,7 @@ function renderRows() {
         </div>
       </td>
       <td><input type="text" class="reason" name="reason" value="${esc(r.reason)}" maxlength="100"
-                 placeholder="${r.type === "휴가" ? "세부사유" : "포상 내용 (포상일 때만 저장)"}"></td>
+                 placeholder="${r.type === "휴가" ? "세부사유" : "포상·공용 세부사항 (체크했을 때만 저장)"}"></td>
       <td><select name="rank">${options(RANKS, r.rank)}</select></td>
       <td><input type="text" name="name" value="${esc(r.name)}" maxlength="20"></td>
       <td><input type="date" name="start_date" value="${r.start_date}"></td>
@@ -388,7 +388,7 @@ $("rows").oninput = (e) => {
     const vacation = e.target.value === "휴가";
     tr.querySelectorAll(".v-only").forEach((el) => el.hidden = !vacation);
     tr.querySelectorAll(".o-only").forEach((el) => el.hidden = vacation);
-    tr.querySelector("input[name=reason]").placeholder = vacation ? "세부사유" : "포상 내용 (포상일 때만 저장)";
+    tr.querySelector("input[name=reason]").placeholder = vacation ? "세부사유" : "포상·공용 세부사항 (체크했을 때만 저장)";
   }
 };
 $("rows").onclick = async (e) => {

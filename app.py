@@ -560,8 +560,16 @@ def detail_label(row):
     return "·".join(parts)
 
 
+def outing_detail_label(reward, official):
+    """외출/외박 세부사항 칸 이름. 포상만이면 '포상 내용', 공용이 들어가면 '공용 세부사항'·'포상·공용 세부사항'.
+    신청 화면(index.html detailLabel)과 같은 이름을 쓴다."""
+    if not official:
+        return "포상 내용"
+    return "포상·공용 세부사항" if reward else "공용 세부사항"
+
+
 def clean_reason(data):
-    """세부사유·포상 내용: 줄바꿈은 공백으로 바꾸고, 다른 제어문자가 있으면 None."""
+    """세부사유·세부사항: 줄바꿈은 공백으로 바꾸고, 다른 제어문자가 있으면 None."""
     reason = text_field(data, "reason")
     if reason is None:
         return None
@@ -592,8 +600,8 @@ def parse_request(data):
     if leave_type == "외출" and start != end:
         return None, "외출은 하루만 선택할 수 있습니다."
 
-    # 휴가는 종류별 일수와 세부사유, 외출/외박은 차수·포상·공용과 포상 내용을 저장한다
-    # (포상 내용은 세부사유와 같은 reason 칸에 저장해 관리자만 본다)
+    # 휴가는 종류별 일수와 세부사유, 외출/외박은 차수·포상·공용과 포상·공용 세부사항을 저장한다
+    # (세부사항은 휴가 세부사유와 같은 reason 칸에 저장해 관리자만 본다)
     vacation_days, reason = {}, ""
     reward = official = False
     outing_round = 0
@@ -621,12 +629,13 @@ def parse_request(data):
         outing_round = data.get("outing_round") or 0
         if isinstance(outing_round, bool) or outing_round not in [0, *OUTING_ROUNDS]:
             return None, "차수를 선택하세요."
-        if reward:
+        if reward or official:
+            what = outing_detail_label(reward, official)
             reason = clean_reason(data)
             if reason is None:
-                return None, "포상 내용에 쓸 수 없는 문자가 들어 있습니다."
+                return None, f"{what}에 쓸 수 없는 문자가 들어 있습니다."
             if len(reason) > 100:
-                return None, "포상 내용은 100자 이내로 입력하세요."
+                return None, f"{what}은 100자 이내로 입력하세요."
 
     return {"rank": rank, "name": name, "type": leave_type,
             "vacation_days": json.dumps(vacation_days, ensure_ascii=False), "reason": reason,

@@ -353,6 +353,36 @@ def test_reward_reason_too_long(client):
     assert r.status_code == 400 and "포상 내용" in r.json["error"]
 
 
+def test_official_reason_saved_and_admin_only(client):
+    r = post(client, make_request(official=True, reason=" 국군병원 외진 "))
+    assert r.status_code == 201 and "reason" not in r.json
+    assert "reason" not in client.get("/api/requests").json[0]
+    client.post("/api/admin/login", json={"password": "admin-test-pw"})
+    assert client.get("/api/requests").json[0]["reason"] == "국군병원 외진"
+
+
+def test_reward_and_official_share_reason(admin):
+    r = post(admin, make_request(reward=True, official=True, reason="분대장 포상 / 외진"))
+    assert r.json["reason"] == "분대장 포상 / 외진"
+
+
+@pytest.mark.parametrize("flags, label", [
+    ({"official": True}, "공용 세부사항"),
+    ({"reward": True, "official": True}, "포상·공용 세부사항"),
+])
+def test_official_reason_errors_use_matching_label(client, flags, label):
+    r = post(client, make_request(**flags, reason="가" * 101))
+    assert r.status_code == 400 and label in r.json["error"]
+    r = post(client, make_request(**flags, reason="외진‮"))
+    assert r.status_code == 400 and label in r.json["error"]
+
+
+def test_admin_unchecking_official_drops_reason(admin):
+    rid = post(admin, make_request(official=True, reason="국군병원 외진")).json["id"]
+    r = admin.put(f"/api/requests/{rid}", json=make_request(official=False, reason="국군병원 외진"))
+    assert r.status_code == 200 and r.json["reason"] == ""
+
+
 def test_admin_updates_round_and_reward_reason(admin):
     rid = post(admin, make_request()).json["id"]
     r = admin.put(f"/api/requests/{rid}", json=make_request(outing_round=1, reward=True, reason="분대장 포상"))
