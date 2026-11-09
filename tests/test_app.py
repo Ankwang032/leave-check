@@ -7,6 +7,10 @@ import app as app_module
 from conftest import make_request, set_strength, vacation
 
 
+# 테스트 신청이 모두 들어가는 조회 기간 (목록 API는 기간이 필수)
+LIST = "/api/requests?from=2026-11-01&to=2026-12-31"
+
+
 def post(client, data):
     return client.post("/api/requests", json=data)
 
@@ -212,7 +216,7 @@ def test_admin_session_does_not_skip_cancel_password(admin):
     rid = post(admin, make_request()).json["id"]
     assert admin.delete(f"/api/requests/{rid}").status_code == 403
     assert admin.delete(f"/api/requests/{rid}", json={"password": "wrong"}).status_code == 403
-    assert len(admin.get("/api/requests").json) == 1
+    assert len(admin.get(LIST).json) == 1
 
 
 def test_admin_delete_route(client):
@@ -220,17 +224,17 @@ def test_admin_delete_route(client):
     assert client.delete(f"/api/admin/requests/{rid}").status_code == 401
     client.post("/api/admin/login", json={"password": "admin-test-pw"})
     assert client.delete(f"/api/admin/requests/{rid}").status_code == 204
-    assert client.get("/api/requests").json == []
+    assert client.get(LIST).json == []
 
 
 def test_reason_visible_only_to_admin(client, set_today):
     set_today(date(2026, 11, 20))
     post(client, vacation("2026-12-01", "2026-12-01", reason="가족 행사"))
-    row = client.get("/api/requests").json[0]
+    row = client.get(LIST).json[0]
     assert "reason" not in row
     assert "password_hash" not in row
     client.post("/api/admin/login", json={"password": "admin-test-pw"})
-    assert client.get("/api/requests").json[0]["reason"] == "가족 행사"
+    assert client.get(LIST).json[0]["reason"] == "가족 행사"
 
 
 def test_create_response_hides_secrets(client):
@@ -317,7 +321,7 @@ def test_today_uses_korea_time(monkeypatch):
 def test_outing_round_saved_and_public(client):
     r = post(client, make_request(outing_round=2))
     assert r.status_code == 201 and r.json["outing_round"] == 2
-    assert client.get("/api/requests").json[0]["outing_round"] == 2
+    assert client.get(LIST).json[0]["outing_round"] == 2
 
 
 def test_outing_round_defaults_to_none(client):
@@ -338,9 +342,9 @@ def test_vacation_ignores_outing_round(client, set_today):
 
 def test_reward_reason_visible_only_to_admin(client):
     post(client, make_request(type="외박", end_date="2026-11-12", reward=True, reason=" 체력검정 특급 포상 "))
-    assert "reason" not in client.get("/api/requests").json[0]
+    assert "reason" not in client.get(LIST).json[0]
     client.post("/api/admin/login", json={"password": "admin-test-pw"})
-    assert client.get("/api/requests").json[0]["reason"] == "체력검정 특급 포상"
+    assert client.get(LIST).json[0]["reason"] == "체력검정 특급 포상"
 
 
 def test_reward_reason_dropped_without_reward(admin):
@@ -356,9 +360,9 @@ def test_reward_reason_too_long(client):
 def test_official_reason_saved_and_admin_only(client):
     r = post(client, make_request(official=True, reason=" 국군병원 외진 "))
     assert r.status_code == 201 and "reason" not in r.json
-    assert "reason" not in client.get("/api/requests").json[0]
+    assert "reason" not in client.get(LIST).json[0]
     client.post("/api/admin/login", json={"password": "admin-test-pw"})
-    assert client.get("/api/requests").json[0]["reason"] == "국군병원 외진"
+    assert client.get(LIST).json[0]["reason"] == "국군병원 외진"
 
 
 def test_reward_and_official_share_reason(admin):
@@ -429,7 +433,7 @@ def set_access(client, code=ACCESS_CODE):
 
 def test_no_access_code_means_open(client):
     assert client.get("/").status_code == 200
-    assert client.get("/api/requests").status_code == 200
+    assert client.get(LIST).status_code == 200
 
 
 def test_access_code_blocks_pages_and_api(client):
@@ -437,7 +441,7 @@ def test_access_code_blocks_pages_and_api(client):
     set_access(client)
     r = client.get("/")
     assert r.status_code == 302 and r.headers["Location"].startswith("/access")
-    assert client.get("/api/requests").status_code == 401
+    assert client.get(LIST).status_code == 401
     assert client.get("/api/settings").status_code == 401
     assert post(client, make_request()).status_code == 401
     assert client.delete("/api/requests/1", json={"password": "pass1234"}).status_code == 401
@@ -446,17 +450,17 @@ def test_access_code_blocks_pages_and_api(client):
 def test_access_code_entry(client):
     set_access(client)
     assert client.post("/api/access", json={"code": "wrong-code"}).status_code == 401
-    assert client.get("/api/requests").status_code == 401
+    assert client.get(LIST).status_code == 401
     assert client.post("/api/access", json={"code": ACCESS_CODE}).status_code == 204
     assert client.get("/").status_code == 200
-    assert client.get("/api/requests").status_code == 200
+    assert client.get(LIST).status_code == 200
 
 
 def test_changing_access_code_logs_everyone_out(client):
     set_access(client)
     client.post("/api/access", json={"code": ACCESS_CODE})
     set_access(client, "new-code-99")
-    assert client.get("/api/requests").status_code == 401
+    assert client.get(LIST).status_code == 401
     assert client.post("/api/access", json={"code": ACCESS_CODE}).status_code == 401
     assert client.post("/api/access", json={"code": "new-code-99"}).status_code == 204
 
@@ -495,7 +499,7 @@ def test_clear_access_code(client):
     assert client.put("/api/settings/access", json={}).status_code == 400  # 실수로 해제되지 않게 빈 코드만 허용
     assert client.put("/api/settings/access", json={"code": ""}).json == {"enabled": False}
     client.post("/api/admin/logout")
-    assert client.get("/api/requests").status_code == 200
+    assert client.get(LIST).status_code == 200
 
 
 @pytest.mark.parametrize("code", ["short", "x" * 31, 123456])
@@ -641,7 +645,7 @@ def test_control_chars_in_name_rejected(client, name):
 
 def test_reason_newlines_become_spaces(admin):
     rid = post(admin, make_request(reward=True, reason="체력\n특급")).json["id"]
-    row = [r for r in admin.get("/api/requests").json if r["id"] == rid][0]
+    row = [r for r in admin.get(LIST).json if r["id"] == rid][0]
     assert row["reason"] == "체력 특급"
 
 
@@ -748,3 +752,67 @@ def test_xss_name_escaped_in_print(admin):
     html = admin.get("/admin/print?from=2026-11-01&to=2026-11-30").get_data(as_text=True)
     assert "<b>x</b>" not in html and "&lt;b&gt;x&lt;/b&gt;" in html
     assert "<script>alert(1)" not in html
+
+
+# ── 리뷰 수정: 외박 기간, 목록 조회 기간, 총원 타입, 오늘 날짜 ─────────
+
+@pytest.mark.parametrize("end, ok", [
+    ("2026-11-11", False),   # 0박
+    ("2026-11-12", True),    # 1박
+    ("2026-11-17", True),    # 6박
+    ("2026-11-18", False),   # 7박
+    ("9999-12-31", False),   # 끝없는 외박
+])
+def test_overnight_length(client, end, ok):
+    r = post(client, make_request(type="외박", end_date=end))
+    assert r.status_code == (201 if ok else 400)
+    if not ok:
+        assert "외박은 1박부터" in r.json["error"]
+
+
+def test_admin_update_also_checks_overnight_length(admin):
+    rid = post(admin, make_request(type="외박", end_date="2026-11-12")).json["id"]
+    r = admin.put(f"/api/requests/{rid}", json=make_request(type="외박", end_date="2027-11-12"))
+    assert r.status_code == 400
+
+
+@pytest.mark.parametrize("query", [
+    "",                                   # 기간 없음
+    "?from=2026-11-01",                   # to 없음
+    "?from=abc&to=2026-11-30",            # 날짜 형식 아님
+    "?from=2026-11-30&to=2026-11-01",     # 거꾸로
+    "?from=2026-01-01&to=2026-12-31",     # 너무 김
+])
+def test_list_requires_valid_range(client, query):
+    assert client.get("/api/requests" + query).status_code == 400
+
+
+def test_list_range_returns_overlapping_only(client):
+    post(client, make_request(start_date="2026-11-11", end_date="2026-11-11"))
+    assert len(client.get("/api/requests?from=2026-11-11&to=2026-11-11").json) == 1
+    assert client.get("/api/requests?from=2026-11-12&to=2026-11-30").json == []
+
+
+@pytest.mark.parametrize("value", [True, False])
+def test_strength_rejects_bool(admin, value):
+    assert admin.put("/api/settings", json={"strength": value}).status_code == 400
+
+
+def test_page_uses_server_today(client, set_today):
+    set_today(date(2026, 11, 5))
+    assert b'const todayIso = "2026-11-05"' in client.get("/").data
+
+
+def test_postgres_placeholder_conversion_keeps_percent_literal():
+    """Postgres 모드의 Database.execute가 리터럴 %를 보존하고 ?만 자리표시자로 바꾸는지."""
+    from psycopg._queries import PostgresQuery
+    from psycopg.adapt import Transformer
+
+    sent = []
+    db = app_module.Database.__new__(app_module.Database)
+    db.postgres = True
+    db.conn = type("Conn", (), {"execute": lambda self, sql, params: sent.append((sql, params))})()
+    db.execute("SELECT * FROM requests WHERE name LIKE '%a%' AND id = ?", (1,))
+    q = PostgresQuery(Transformer())
+    q.convert(*sent[0])
+    assert q.query == b"SELECT * FROM requests WHERE name LIKE '%a%' AND id = $1"

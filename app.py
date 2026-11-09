@@ -25,6 +25,7 @@ VACATION_KINDS = ["연가", "보상", "포상", "위로"]
 OUTING_ROUNDS = [1, 2]  # 외출/외박 차수 (0은 선택 안 함)
 RANKS = ["이병", "일병", "상병", "병장", "하사", "중사", "상사",
          "준위", "소위", "중위", "대위"]
+OUTING_MAX_NIGHTS = 6  # 외박 최대 박수 (외출/외박 대상 주 7일 안)
 VACATION_LIMIT = 20  # 휴가 출타율 상한(%)
 TOTAL_LIMIT = 35     # 휴가+외박+외출 출타율 상한(%)
 
@@ -89,7 +90,9 @@ class Database:
 
     def execute(self, sql, params=()):
         if self.postgres:
-            sql = sql.replace("?", "%s")
+            # psycopg에서 %는 자리표시자 문자라 리터럴 %는 %%로 바꾼 뒤 ?를 %s로 바꾼다.
+            # SQL 문자열 안에 리터럴 ?는 쓰지 않는다 (자리표시자로 바뀜).
+            sql = sql.replace("%", "%%").replace("?", "%s")
         return self.conn.execute(sql, params)
 
     def commit(self):
@@ -112,29 +115,34 @@ def close_db(_exc):
         db.close()
 
 
-POSTGRES_SCHEMA = [
-    """
-    CREATE TABLE IF NOT EXISTS requests (
-        id SERIAL PRIMARY KEY,
-        rank TEXT NOT NULL,
-        name TEXT NOT NULL,
-        password_hash TEXT NOT NULL DEFAULT '',
-        type TEXT NOT NULL,
-        vacation_days TEXT NOT NULL DEFAULT '',
-        reason TEXT NOT NULL DEFAULT '',
-        reward INTEGER NOT NULL DEFAULT 0,
-        official INTEGER NOT NULL DEFAULT 0,
-        outing_round INTEGER NOT NULL DEFAULT 0,
-        start_date TEXT NOT NULL,
-        end_date TEXT NOT NULL,
-        created_at TEXT NOT NULL
-    )
-    """,
-    "ALTER TABLE requests ADD COLUMN IF NOT EXISTS outing_round INTEGER NOT NULL DEFAULT 0",
+# requests 테이블 컬럼 (id 제외). SQLite와 Postgres가 같은 목록을 쓰고,
+# 이미 있는 DB에 없는 컬럼은 서버가 시작할 때 추가한다. 컬럼은 여기에만 추가하면 된다.
+REQUEST_COLUMNS = [
+    ("rank", "TEXT NOT NULL"),
+    ("name", "TEXT NOT NULL"),
+    ("password_hash", "TEXT NOT NULL DEFAULT ''"),
+    ("type", "TEXT NOT NULL"),
+    ("vacation_days", "TEXT NOT NULL DEFAULT ''"),
+    ("reason", "TEXT NOT NULL DEFAULT ''"),
+    ("reward", "INTEGER NOT NULL DEFAULT 0"),
+    ("official", "INTEGER NOT NULL DEFAULT 0"),
+    ("outing_round", "INTEGER NOT NULL DEFAULT 0"),
+    ("start_date", "TEXT NOT NULL"),
+    ("end_date", "TEXT NOT NULL"),
+    ("created_at", "TEXT NOT NULL"),
+]
+# 처음부터 있던 컬럼 (나중에 추가할 때 기본값이 없어도 되는 것)
+BASE_COLUMNS = {"rank", "name", "type", "start_date", "end_date", "created_at"}
+OTHER_TABLES = [
     "CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)",
     "CREATE TABLE IF NOT EXISTS attempts (key TEXT PRIMARY KEY, fails INTEGER NOT NULL, reset_at TEXT NOT NULL)",
     "CREATE INDEX IF NOT EXISTS requests_dates ON requests (start_date, end_date)",
 ]
+
+
+def create_requests_sql(id_ddl):
+    columns = ",\n    ".join(f"{name} {ddl}" for name, ddl in REQUEST_COLUMNS)
+    return f"CREATE TABLE IF NOT EXISTS requests (\n    id {id_ddl},\n    {columns}\n)"
 
 
 def init_db():
@@ -143,43 +151,25 @@ def init_db():
         try:
             # 여러 서버 인스턴스가 동시에 시작해도 테이블 생성이 겹치지 않게 잠근다
             db.execute("SELECT pg_advisory_xact_lock(20261101)")
-            for sql in POSTGRES_SCHEMA:
+            db.execute(create_requests_sql("SERIAL PRIMARY KEY"))
+            for name, ddl in REQUEST_COLUMNS:
+                if name not in BASE_COLUMNS:
+                    db.execute(f"ALTER TABLE requests ADD COLUMN IF NOT EXISTS {name} {ddl}")
+            for sql in OTHER_TABLES:
                 db.execute(sql)
             db.commit()
         finally:
             db.close()
         return
     with sqlite3.connect(DB_PATH) as db:
-        db.execute("""
-            CREATE TABLE IF NOT EXISTS requests (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                rank TEXT NOT NULL,
-                name TEXT NOT NULL,
-                password_hash TEXT NOT NULL DEFAULT '',
-                type TEXT NOT NULL,
-                vacation_days TEXT NOT NULL DEFAULT '',
-                reason TEXT NOT NULL DEFAULT '',
-                reward INTEGER NOT NULL DEFAULT 0,
-                official INTEGER NOT NULL DEFAULT 0,
-                outing_round INTEGER NOT NULL DEFAULT 0,
-                start_date TEXT NOT NULL,
-                end_date TEXT NOT NULL,
-                created_at TEXT NOT NULL
-            )
-        """)
-        db.execute("CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
-        db.execute("CREATE TABLE IF NOT EXISTS attempts "
-                   "(key TEXT PRIMARY KEY, fails INTEGER NOT NULL, reset_at TEXT NOT NULL)")
+        db.execute(create_requests_sql("INTEGER PRIMARY KEY AUTOINCREMENT"))
         # 나중에 추가된 컬럼이 없는 이전 DB 보정
         columns = [r[1] for r in db.execute("PRAGMA table_info(requests)")]
-        for column, ddl in [("password_hash", "TEXT NOT NULL DEFAULT ''"),
-                            ("vacation_days", "TEXT NOT NULL DEFAULT ''"),
-                            ("reason", "TEXT NOT NULL DEFAULT ''"),
-                            ("reward", "INTEGER NOT NULL DEFAULT 0"),
-                            ("official", "INTEGER NOT NULL DEFAULT 0"),
-                            ("outing_round", "INTEGER NOT NULL DEFAULT 0")]:
-            if column not in columns:
-                db.execute(f"ALTER TABLE requests ADD COLUMN {column} {ddl}")
+        for name, ddl in REQUEST_COLUMNS:
+            if name not in columns and name not in BASE_COLUMNS:
+                db.execute(f"ALTER TABLE requests ADD COLUMN {name} {ddl}")
+        for sql in OTHER_TABLES:
+            db.execute(sql)
         # 휴가 종류를 하나만 저장하던 이전 신청은 전체 일수를 그 종류로 옮긴다
         if "vacation_kind" in columns:
             for r in db.execute("SELECT id, vacation_kind, start_date, end_date FROM requests "
@@ -235,8 +225,11 @@ def admin_required(view):
 # 코드는 해시로 저장하고, 바꿀 때마다 version이 바뀌어 이전에 입력한 사람도 다시 입력해야 한다.
 
 def get_access():
-    row = get_db().execute("SELECT value FROM settings WHERE key = 'access'").fetchone()
-    return json.loads(row["value"]) if row else None
+    """접속 코드 설정. 한 요청 안에서는 g에 캐시한다 (바꾸면 update_access가 갱신)."""
+    if "access" not in g:
+        row = get_db().execute("SELECT value FROM settings WHERE key = 'access'").fetchone()
+        g.access = json.loads(row["value"]) if row else None
+    return g.access
 
 
 def has_access():
@@ -427,6 +420,7 @@ def update_access():
     if code == "":  # 빈 코드를 보내면 접속 코드를 해제한다
         db.execute("DELETE FROM settings WHERE key = 'access'")
         db.commit()
+        g.access = None
         return jsonify(enabled=False)
     if not 6 <= len(code) <= 30:
         return jsonify(error="접속 코드를 6~30자로 입력하세요."), 400
@@ -435,6 +429,7 @@ def update_access():
     db.execute("INSERT INTO settings (key, value) VALUES ('access', ?) "
                "ON CONFLICT (key) DO UPDATE SET value = excluded.value", (json.dumps(access),))
     db.commit()
+    g.access = access
     session["access"] = access["version"]  # 바꾼 관리자는 새 코드로 접속을 유지한다
     session.permanent = True
     return jsonify(enabled=True, changed_at=access["changed_at"])
@@ -599,6 +594,8 @@ def parse_request(data):
         return None, "종료일이 시작일보다 빠릅니다."
     if leave_type == "외출" and start != end:
         return None, "외출은 하루만 선택할 수 있습니다."
+    if leave_type == "외박" and not 1 <= (end - start).days <= OUTING_MAX_NIGHTS:
+        return None, f"외박은 1박부터 {OUTING_MAX_NIGHTS}박까지 신청할 수 있습니다. 종료일을 확인하세요."
 
     # 휴가는 종류별 일수와 세부사유, 외출/외박은 차수·포상·공용과 포상·공용 세부사항을 저장한다
     # (세부사항은 휴가 세부사유와 같은 reason 칸에 저장해 관리자만 본다)
@@ -682,7 +679,7 @@ def capacity_warnings(req, exclude_id=None):
 def today_tile():
     """상단 바 일력에 쓰는 오늘(한국 날짜)."""
     t = today()
-    return {"month": t.month, "day": t.day, "dow": WEEKDAYS[t.weekday()]}
+    return {"month": t.month, "day": t.day, "dow": WEEKDAYS[t.weekday()], "iso": t.isoformat()}
 
 
 @app.get("/")
@@ -783,7 +780,7 @@ def update_window():
 @admin_required
 def update_settings():
     strength = json_body().get("strength")
-    if not isinstance(strength, int) or not 0 <= strength <= 10000:
+    if not isinstance(strength, int) or isinstance(strength, bool) or not 0 <= strength <= 10000:
         return jsonify(error="총원을 0~10000 사이 숫자로 입력하세요."), 400
     db = get_db()
     db.execute("INSERT INTO settings (key, value) VALUES ('strength', ?) "
@@ -792,15 +789,23 @@ def update_settings():
     return jsonify(limits(strength))
 
 
+LIST_MAX_DAYS = 62  # 신청 목록 한 번에 조회할 수 있는 최대 일수 (화면은 한 달·한 주 단위로 조회)
+
+
 @app.get("/api/requests")
 def list_requests():
-    # ?from=YYYY-MM-DD&to=YYYY-MM-DD 기간과 겹치는 신청만 반환
-    start = request.args.get("from", "0000-01-01")
-    end = request.args.get("to", "9999-12-31")
+    # ?from=YYYY-MM-DD&to=YYYY-MM-DD 기간과 겹치는 신청만 반환 (기간은 필수, 최대 LIST_MAX_DAYS일)
+    try:
+        start = date.fromisoformat(request.args.get("from", ""))
+        end = date.fromisoformat(request.args.get("to", ""))
+    except ValueError:
+        return jsonify(error="조회 기간(from, to)을 YYYY-MM-DD로 입력하세요."), 400
+    if not 0 <= (end - start).days < LIST_MAX_DAYS:
+        return jsonify(error=f"조회 기간은 {LIST_MAX_DAYS}일 이내로 입력하세요."), 400
     rows = get_db().execute(
         "SELECT * FROM requests WHERE start_date <= ? AND end_date >= ? "
         "ORDER BY start_date, id",
-        (end, start),
+        (end.isoformat(), start.isoformat()),
     ).fetchall()
     return jsonify([public_row(r) for r in rows])
 

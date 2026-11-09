@@ -282,11 +282,11 @@ window.fetch = async (...args) => {
 const $ = (id) => document.getElementById(id);
 const pad = (n) => String(n).padStart(2, "0");
 const iso = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-const todayIso = iso(new Date());
+const todayIso = "{{ today.iso }}";  // 서버의 한국 날짜 (기기 시간대와 무관하게 서버 판단과 맞춘다)
 const fmt = (s) => { const [, m, d] = s.split("-"); return `${+m}/${+d}`; };
 const parse = (s) => { const [y, m, d] = s.split("-"); return new Date(y, m - 1, d); };
 
-let view = new Date(); view.setDate(1);
+let view = parse(todayIso); view.setDate(1);
 let requests = [];
 let settings = { strength: 0 };
 let selStart = null, selEnd = null;   // 신청할 기간
