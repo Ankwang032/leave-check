@@ -25,7 +25,8 @@ VACATION_KINDS = ["연가", "보상", "포상", "위로"]
 OUTING_ROUNDS = [1, 2]  # 외출/외박 차수 (0은 선택 안 함)
 RANKS = ["이병", "일병", "상병", "병장", "하사", "중사", "상사",
          "준위", "소위", "중위", "대위"]
-OUTING_MAX_NIGHTS = 6  # 외박 최대 박수 (외출/외박 대상 주 7일 안)
+OUTING_MAX_DAYS = 4  # 외박 최대 일수 (시작일·종료일 포함, 3박 4일)
+VACATION_MAX_DAYS = 15  # 휴가 한 번에 신청할 수 있는 최대 일수
 VACATION_LIMIT = 20  # 휴가 출타율 상한(%)
 TOTAL_LIMIT = 35     # 휴가+외박+외출 출타율 상한(%)
 
@@ -594,8 +595,11 @@ def parse_request(data):
         return None, "종료일이 시작일보다 빠릅니다."
     if leave_type == "외출" and start != end:
         return None, "외출은 하루만 선택할 수 있습니다."
-    if leave_type == "외박" and not 1 <= (end - start).days <= OUTING_MAX_NIGHTS:
-        return None, f"외박은 1박부터 {OUTING_MAX_NIGHTS}박까지 신청할 수 있습니다. 종료일을 확인하세요."
+    if leave_type == "외박" and not 2 <= (end - start).days + 1 <= OUTING_MAX_DAYS:
+        return None, (f"외박은 1박 2일부터 {OUTING_MAX_DAYS - 1}박 {OUTING_MAX_DAYS}일까지 "
+                      "신청할 수 있습니다. 종료일을 확인하세요.")
+    if leave_type == "휴가" and (end - start).days + 1 > VACATION_MAX_DAYS:
+        return None, f"휴가는 최대 {VACATION_MAX_DAYS}일까지 신청할 수 있습니다. 종료일을 확인하세요."
 
     # 휴가는 종류별 일수와 세부사유, 외출/외박은 차수·포상·공용과 포상·공용 세부사항을 저장한다
     # (세부사항은 휴가 세부사유와 같은 reason 칸에 저장해 관리자만 본다)

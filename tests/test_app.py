@@ -759,15 +759,37 @@ def test_xss_name_escaped_in_print(admin):
 @pytest.mark.parametrize("end, ok", [
     ("2026-11-11", False),   # 0박
     ("2026-11-12", True),    # 1박
-    ("2026-11-17", True),    # 6박
-    ("2026-11-18", False),   # 7박
+    ("2026-11-14", True),    # 3박 4일
+    ("2026-11-15", False),   # 4박 5일
     ("9999-12-31", False),   # 끝없는 외박
 ])
 def test_overnight_length(client, end, ok):
     r = post(client, make_request(type="외박", end_date=end))
     assert r.status_code == (201 if ok else 400)
     if not ok:
-        assert "외박은 1박부터" in r.json["error"]
+        assert "외박은 1박 2일부터" in r.json["error"]
+
+
+@pytest.mark.parametrize("end, ok", [
+    ("2026-12-15", True),    # 15일
+    ("2026-12-16", False),   # 16일
+    ("9999-12-31", False),   # 끝없는 휴가
+])
+def test_vacation_length(client, set_today, end, ok):
+    set_today(date(2026, 11, 20))  # 12월 휴가 접수일
+    days = {"연가": 15, "포상": 1} if end == "2026-12-16" else None
+    r = post(client, vacation("2026-12-01", end, days) if end != "9999-12-31"
+             else make_request(type="휴가", start_date="2026-12-01", end_date=end, vacation_days={"연가": 1}))
+    assert r.status_code == (201 if ok else 400)
+    if not ok:
+        assert "휴가는 최대 15일" in r.json["error"]
+
+
+def test_admin_update_also_checks_vacation_length(admin, set_today):
+    set_today(date(2026, 11, 20))
+    rid = post(admin, vacation("2026-12-01", "2026-12-03")).json["id"]
+    r = admin.put(f"/api/requests/{rid}", json=vacation("2026-12-01", "2026-12-20", {"연가": 15, "포상": 5}))
+    assert r.status_code == 400 and "휴가는 최대 15일" in r.json["error"]
 
 
 def test_admin_update_also_checks_overnight_length(admin):
